@@ -1,0 +1,13 @@
+@import "tailwindcss";
+
+/* Class-based dark mode for Tailwind v4 */
+@variant dark (&:where(.dark, .dark *));
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+body {
+  font-family: Arial, Helvetica, sans-serif;
+}
