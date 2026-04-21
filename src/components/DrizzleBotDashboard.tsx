@@ -7,7 +7,8 @@ import {
   Settings2, Bell, Search, LogOut, ChevronDown, Moon, Sun, TrendingUp,
   TrendingDown, MoreHorizontal, X, Menu, ChevronRight, Building2, AlertCircle,
   Download, Clock, PhoneMissed, Globe, Save, Play, RefreshCw, CheckCircle2,
-  Mail, Link2, ChevronLeft, ArrowDownLeft, ArrowUpRight,
+  Mail, Link2, ChevronLeft, ArrowDownLeft, ArrowUpRight, Trash2, Pause,
+  PhoneCall, Send, RotateCcw,
 } from 'lucide-react'
 
 // ─── Supabase ─────────────────────────────────────────────────────────────────
@@ -44,6 +45,7 @@ interface Message {
 }
 interface OverviewStats { todayAppointments: number; totalCalls: number; totalContacts: number; totalMessages: number }
 interface Notification { id: string; type: 'call' | 'appointment' | 'message'; text: string; time: string; read: boolean }
+interface ToastItem { id: string; msg: string; type: 'success' | 'error' | 'info' }
 
 type PageProps = { user: AppUser; activeClientId: string | null }
 
@@ -59,12 +61,12 @@ const NAV_ITEMS: NavEntry[] = [
   { id: 'controls',     label: 'Controls',     Icon: Settings2, adminOnly: true },
 ]
 
-const WEBHOOK_CONFIGS = [
-  { key: 'wh-pause',     label: 'Pause AI',   desc: 'Temporarily stops the AI from answering calls',          color: 'amber'   },
-  { key: 'wh-resume',    label: 'Resume AI',  desc: 'Resumes AI receptionist call answering',                 color: 'emerald' },
-  { key: 'wh-test-call', label: 'Test Call',  desc: 'Triggers a test call to verify AI configuration',        color: 'blue'    },
-  { key: 'wh-followup',  label: 'Follow-up',  desc: 'Sends follow-up messages to callers from last 24 hours', color: 'violet'  },
-] as const
+const WEBHOOK_KEYS: Record<string, string> = {
+  pause:    'wh-pause',
+  resume:   'wh-resume',
+  testCall: 'wh-test-call',
+  followup: 'wh-followup',
+}
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December']
 const DAYS   = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
@@ -83,6 +85,71 @@ function exportCSV(filename: string, headers: string[], rows: string[][]) {
   const csv = [headers, ...rows].map(r => r.map(v => `"${(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\n')
   const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob([csv], { type: 'text/csv' })), download: filename })
   a.click()
+}
+
+// ─── Toast System ─────────────────────────────────────────────────────────────
+
+let _setToasts: React.Dispatch<React.SetStateAction<ToastItem[]>> | null = null
+
+function showToast(msg: string, type: ToastItem['type'] = 'info') {
+  if (!_setToasts) return
+  const id = Math.random().toString(36).slice(2)
+  _setToasts(ts => [...ts, { id, msg, type }])
+  setTimeout(() => _setToasts?.(ts => ts.filter(t => t.id !== id)), 3500)
+}
+
+function ToastContainer() {
+  const [toasts, setToasts] = useState<ToastItem[]>([])
+  useEffect(() => { _setToasts = setToasts; return () => { _setToasts = null } }, [])
+  if (!toasts.length) return null
+  return (
+    <div className="fixed bottom-6 right-6 z-[9999] flex flex-col gap-2 pointer-events-none">
+      {toasts.map(t => (
+        <div key={t.id} className={cn(
+          'flex items-center gap-2.5 rounded-xl px-4 py-3 text-sm font-medium shadow-xl pointer-events-auto',
+          t.type === 'success' && 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-500/20',
+          t.type === 'error'   && 'bg-red-50 text-red-700 ring-1 ring-red-200 dark:bg-red-500/10 dark:text-red-400 dark:ring-red-500/20',
+          t.type === 'info'    && 'bg-blue-50 text-blue-700 ring-1 ring-blue-200 dark:bg-blue-500/10 dark:text-blue-400 dark:ring-blue-500/20',
+        )}>
+          {t.type === 'success' && <CheckCircle2 className="h-4 w-4 flex-shrink-0" />}
+          {t.type === 'error'   && <AlertCircle className="h-4 w-4 flex-shrink-0" />}
+          {t.type === 'info'    && <Bell className="h-4 w-4 flex-shrink-0" />}
+          {t.msg}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ─── Delete Modal ─────────────────────────────────────────────────────────────
+
+function DeleteModal({ target, onClose, onConfirm, busy }: {
+  target: { id: string; label: string } | null
+  onClose: () => void; onConfirm: () => void; busy: boolean
+}) {
+  if (!target) return null
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+      onClick={e => { if (e.target === e.currentTarget) onClose() }}>
+      <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-white/[0.1] dark:bg-[#111827]">
+        <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-red-100 dark:bg-red-500/10">
+          <Trash2 className="h-5 w-5 text-red-600 dark:text-red-400" />
+        </div>
+        <h3 className="text-base font-semibold text-slate-900 dark:text-white" style={{ fontFamily: "'Space Grotesk',sans-serif" }}>Delete appointment?</h3>
+        <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+          <strong className="text-slate-700 dark:text-slate-300">{target.label}</strong> will be soft-deleted and hidden from all views. It can be restored later.
+        </p>
+        <div className="mt-6 flex gap-3">
+          <button onClick={onClose} className="flex-1 rounded-xl border border-slate-200 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 dark:border-white/[0.08] dark:text-slate-300 dark:hover:bg-white/[0.05]">Cancel</button>
+          <button onClick={onConfirm} disabled={busy}
+            className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-red-600 py-2.5 text-sm font-medium text-white shadow-lg shadow-red-500/20 transition-all hover:bg-red-500 disabled:opacity-50">
+            {busy ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+            {busy ? 'Deleting…' : 'Delete'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 // ─── Shared UI ────────────────────────────────────────────────────────────────
@@ -476,7 +543,7 @@ function OverviewPage({ user, activeClientId }: PageProps) {
     return q
   }, [user, activeClientId])
 
-  useEffect(() => {
+  const loadData = useCallback(() => {
     const today = new Date().toISOString().slice(0, 10)
     setStatsLoading(true)
     Promise.all([
@@ -492,6 +559,12 @@ function OverviewPage({ user, activeClientId }: PageProps) {
     addFilter(sb.from('appointments').select('*').is('deleted_at', null).order('date', { ascending: false }).limit(8))
       .then(({ data }: any) => { setAppointments((data as Appointment[]) ?? []); setApptLoading(false) })
   }, [addFilter])
+
+  useEffect(() => {
+    loadData()
+    const timer = setInterval(loadData, 60000)
+    return () => clearInterval(timer)
+  }, [loadData])
 
   const cards = [
     { label: "Today's Appointments", value: stats.todayAppointments, accent: 'bg-violet-600', icon: <CalendarDays className="h-5 w-5 text-white" />, trend: { value: 12, up: true } },
@@ -550,6 +623,11 @@ function AppointmentsPage({ user, activeClientId }: PageProps) {
   const [status, setStatus] = useState('all')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; label: string } | null>(null)
+  const [deleteBusy, setDeleteBusy] = useState(false)
+  const [showDeleted, setShowDeleted] = useState(false)
+  const [deletedRows, setDeletedRows] = useState<Appointment[]>([])
+  const [deletedLoading, setDeletedLoading] = useState(false)
 
   const addFilter = useCallback((q: any) => {
     if (user.role === 'admin' && activeClientId) return q.eq('client_id', activeClientId)
@@ -565,6 +643,41 @@ function AppointmentsPage({ user, activeClientId }: PageProps) {
     if (dateTo)   q = q.lte('date', `${dateTo}T23:59:59`)
     q.then(({ data }: any) => { setRows((data as Appointment[]) ?? []); setLoading(false) })
   }, [addFilter, status, dateFrom, dateTo])
+
+  async function loadDeleted() {
+    setDeletedLoading(true)
+    const q = addFilter(sb.from('appointments').select('*').not('deleted_at', 'is', null).order('deleted_at', { ascending: false }).limit(30))
+    const { data } = await q
+    setDeletedRows((data as Appointment[]) ?? [])
+    setDeletedLoading(false)
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget) return
+    setDeleteBusy(true)
+    const { error } = await sb.from('appointments').update({ deleted_at: new Date().toISOString() }).eq('id', deleteTarget.id)
+    if (error) { showToast('Delete failed: ' + error.message, 'error') }
+    else {
+      setRows(r => r.filter(x => x.id !== deleteTarget.id))
+      showToast('Appointment deleted', 'success')
+      if (showDeleted) loadDeleted()
+    }
+    setDeleteBusy(false)
+    setDeleteTarget(null)
+  }
+
+  async function restoreAppointment(id: string) {
+    const { error } = await sb.from('appointments').update({ deleted_at: null }).eq('id', id)
+    if (error) { showToast('Restore failed: ' + error.message, 'error'); return }
+    showToast('Appointment restored', 'success')
+    setDeletedRows(r => r.filter(x => x.id !== id))
+  }
+
+  function toggleDeleted() {
+    const next = !showDeleted
+    setShowDeleted(next)
+    if (next) loadDeleted()
+  }
 
   return (
     <div className="space-y-6">
@@ -591,7 +704,7 @@ function AppointmentsPage({ user, activeClientId }: PageProps) {
           )}
           <ExportButton onClick={() => exportCSV('appointments.csv', ['Email','Type','Phone','Date','Status'], rows.map(r => [r.email, r.appointment_type, r.contact_phone, r.date, r.status]))} />
         </div>
-        {loading ? <TableSkeleton cols={5} /> :
+        {loading ? <TableSkeleton cols={6} /> :
          rows.length === 0 ? <EmptyState icon={CalendarDays} label="No appointments found" sub="Try adjusting your filters" /> : (
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -604,7 +717,12 @@ function AppointmentsPage({ user, activeClientId }: PageProps) {
                     <td className="px-6 py-4 text-sm text-slate-500 dark:text-slate-400">{r.contact_phone}</td>
                     <td className="px-6 py-4 text-sm text-slate-500 dark:text-slate-400">{formatDate(r.date)}</td>
                     <td className="px-6 py-4"><StatusBadge status={r.status} /></td>
-                    <td className="px-6 py-4"><button className="rounded-lg p-1.5 text-slate-300 opacity-0 transition-all hover:bg-slate-100 hover:text-slate-600 group-hover:opacity-100 dark:text-slate-600 dark:hover:bg-white/10 dark:hover:text-white"><MoreHorizontal className="h-4 w-4" /></button></td>
+                    <td className="px-6 py-4">
+                      <button onClick={() => setDeleteTarget({ id: r.id, label: `${r.appointment_type} for ${r.email || r.contact_phone}` })}
+                        className="rounded-lg p-1.5 text-slate-300 opacity-0 transition-all hover:bg-red-50 hover:text-red-500 group-hover:opacity-100 dark:text-slate-600 dark:hover:bg-red-500/10 dark:hover:text-red-400">
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -612,6 +730,46 @@ function AppointmentsPage({ user, activeClientId }: PageProps) {
           </div>
         )}
       </GlassCard>
+
+      {/* Recently Deleted */}
+      <GlassCard>
+        <button onClick={toggleDeleted} className="flex w-full items-center justify-between px-6 py-4">
+          <div className="flex items-center gap-2">
+            <Trash2 className="h-4 w-4 text-slate-400" />
+            <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Recently Deleted</span>
+            {deletedRows.length > 0 && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500 dark:bg-white/[0.08] dark:text-slate-400">{deletedRows.length}</span>}
+          </div>
+          <ChevronDown className={cn('h-4 w-4 text-slate-400 transition-transform duration-200', showDeleted && 'rotate-180')} />
+        </button>
+        {showDeleted && (
+          deletedLoading ? <TableSkeleton cols={5} rows={3} /> :
+          deletedRows.length === 0 ? <EmptyState icon={Trash2} label="No deleted appointments" /> : (
+            <div className="overflow-x-auto border-t border-slate-100 dark:border-white/[0.05]">
+              <table className="w-full">
+                <TableHead cols={['Contact', 'Type', 'Date', 'Status', '']} />
+                <tbody className="divide-y divide-slate-100 dark:divide-white/[0.04]">
+                  {deletedRows.map(r => (
+                    <tr key={r.id} className="opacity-60 transition-opacity hover:opacity-100">
+                      <td className="px-6 py-4 text-sm text-slate-700 dark:text-slate-300">{r.email}</td>
+                      <td className="px-6 py-4 text-sm text-slate-500 dark:text-slate-400">{r.appointment_type}</td>
+                      <td className="px-6 py-4 text-sm text-slate-500 dark:text-slate-400">{formatDate(r.date)}</td>
+                      <td className="px-6 py-4"><StatusBadge status={r.status} /></td>
+                      <td className="px-6 py-4">
+                        <button onClick={() => restoreAppointment(r.id)}
+                          className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50 dark:border-white/[0.08] dark:text-slate-400 dark:hover:bg-white/[0.06]">
+                          <RotateCcw className="h-3 w-3" />Restore
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        )}
+      </GlassCard>
+
+      <DeleteModal target={deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={confirmDelete} busy={deleteBusy} />
     </div>
   )
 }
@@ -1006,104 +1164,254 @@ function MessagesPage({ user, activeClientId }: PageProps) {
 
 // ─── Controls Page ────────────────────────────────────────────────────────────
 
-function ControlsPage() {
-  const [urls, setUrls] = useState<Record<string, string>>(() =>
+interface CalClient { id: string; name: string; calendar_webhook_url: string | null }
+type LogEntry = { time: string; msg: string; ok: boolean }
+
+function ControlsPage({ user, activeClientId }: PageProps) {
+  const [paused, setPaused]       = useState(false)
+  const [actionLog, setActionLog] = useState<LogEntry[]>([])
+  const [testPhone, setTestPhone] = useState('')
+  const [fuPhone, setFuPhone]     = useState('')
+  const [fuChannel, setFuChannel] = useState('sms')
+  const [busy, setBusy]           = useState<Record<string, boolean>>({})
+  const [calClients, setCalClients] = useState<CalClient[]>([])
+  const [calUrls, setCalUrls]     = useState<Record<string, string>>({})
+  const [wh, setWh]               = useState<Record<string, string>>(() =>
     typeof window === 'undefined' ? {} :
-    WEBHOOK_CONFIGS.reduce((acc, { key }) => ({ ...acc, [key]: localStorage.getItem(key) ?? '' }), {})
+    Object.fromEntries(Object.entries(WEBHOOK_KEYS).map(([k, v]) => [k, localStorage.getItem(v) ?? '']))
   )
-  const [saved, setSaved]     = useState<Record<string, boolean>>({})
-  const [testing, setTesting] = useState<Record<string, boolean>>({})
-  const [result, setResult]   = useState<Record<string, 'ok' | 'err'>>({})
+  const [whSaved, setWhSaved]     = useState(false)
 
-  function handleSave(key: string) {
-    localStorage.setItem(key, urls[key] ?? '')
-    setSaved(p => ({ ...p, [key]: true }))
-    setTimeout(() => setSaved(p => ({ ...p, [key]: false })), 2000)
+  const effectiveClient = activeClientId ?? user.client_id
+
+  useEffect(() => {
+    if (user.role !== 'admin') return
+    sb.from('clients').select('id,name,calendar_webhook_url').order('id')
+      .then(({ data }) => {
+        const rows = (data as CalClient[]) ?? []
+        setCalClients(rows)
+        setCalUrls(Object.fromEntries(rows.map(r => [r.id, r.calendar_webhook_url ?? ''])))
+      })
+  }, [user.role])
+
+  function addLog(msg: string, ok: boolean) {
+    const time = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    setActionLog(l => [{ time, msg, ok }, ...l].slice(0, 20))
   }
 
-  async function handleTest(key: string) {
-    const url = urls[key]; if (!url) return
-    setTesting(p => ({ ...p, [key]: true })); setResult(p => { const n = { ...p }; delete n[key]; return n })
+  async function fireWebhook(action: keyof typeof WEBHOOK_KEYS, payload: Record<string, unknown>) {
+    const url = localStorage.getItem(WEBHOOK_KEYS[action]) ?? ''
+    if (!url) { addLog(`No URL set for "${action}" — add it in Webhook URLs below.`, false); return false }
+    setBusy(b => ({ ...b, [action]: true }))
     try {
-      await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ test: true, source: 'drizzlebot', webhook: key }) })
-      setResult(p => ({ ...p, [key]: 'ok' }))
-    } catch { setResult(p => ({ ...p, [key]: 'err' })) }
-    setTesting(p => ({ ...p, [key]: false }))
-    setTimeout(() => setResult(p => { const n = { ...p }; delete n[key]; return n }), 3000)
+      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, triggered_by: user.email, client_id: effectiveClient, timestamp: new Date().toISOString(), ...payload }) })
+      const ok = res.ok
+      addLog(ok ? `✓ ${action} triggered successfully` : `HTTP ${res.status} — check webhook URL`, ok)
+      showToast(ok ? `${action} triggered` : `Webhook error ${res.status}`, ok ? 'success' : 'error')
+      return ok
+    } catch (e: any) {
+      addLog(`Failed: ${e.message}`, false)
+      showToast('Could not reach webhook', 'error')
+      return false
+    } finally { setBusy(b => ({ ...b, [action]: false })) }
   }
 
-  const colorMap: Record<string, { ring: string; iconCls: string; bg: string }> = {
-    amber:   { ring: 'ring-amber-500/20',   iconCls: 'text-amber-600   dark:text-amber-400',   bg: 'bg-amber-500/10'   },
-    emerald: { ring: 'ring-emerald-500/20', iconCls: 'text-emerald-600 dark:text-emerald-400', bg: 'bg-emerald-500/10' },
-    blue:    { ring: 'ring-blue-500/20',    iconCls: 'text-blue-600    dark:text-blue-400',    bg: 'bg-blue-500/10'    },
-    violet:  { ring: 'ring-violet-500/20',  iconCls: 'text-violet-600  dark:text-violet-400',  bg: 'bg-violet-500/10'  },
+  async function handlePause() {
+    const ok = await fireWebhook('pause', {})
+    if (ok) setPaused(true)
+  }
+  async function handleResume() {
+    const ok = await fireWebhook('resume', {})
+    if (ok) setPaused(false)
+  }
+  async function handleTestCall() {
+    if (!testPhone.trim()) { addLog('Enter a phone number first.', false); return }
+    await fireWebhook('testCall', { phone: testPhone.trim() })
+  }
+  async function handleFollowup() {
+    if (!fuPhone.trim()) { addLog('Enter a phone number first.', false); return }
+    await fireWebhook('followup', { phone: fuPhone.trim(), channel: fuChannel })
+  }
+
+  function saveWebhooks() {
+    Object.entries(WEBHOOK_KEYS).forEach(([k, v]) => localStorage.setItem(v, wh[k] ?? ''))
+    setWhSaved(true); setTimeout(() => setWhSaved(false), 2000)
+    showToast('Webhook URLs saved', 'success')
+  }
+
+  async function saveCalUrl(clientId: string) {
+    const { error } = await sb.from('clients').update({ calendar_webhook_url: calUrls[clientId] || null }).eq('id', clientId)
+    if (error) { showToast('Save failed: ' + error.message, 'error'); return }
+    showToast('Calendar URL saved', 'success')
+    setCalClients(cs => cs.map(c => c.id === clientId ? { ...c, calendar_webhook_url: calUrls[clientId] || null } : c))
   }
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Controls"
-        subtitle="Admin-only webhook configuration for AI platform connections"
-        action={
-          <div className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-500/20 dark:bg-amber-500/5">
-            <Settings2 className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
-            <span className="text-xs font-medium text-amber-700 dark:text-amber-400">Admin Access Only</span>
-          </div>
-        }
+      <PageHeader title="Controls" subtitle="Manage your AI receptionist"
+        action={<div className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-500/20 dark:bg-amber-500/5"><Settings2 className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" /><span className="text-xs font-medium text-amber-700 dark:text-amber-400">Admin Access Only</span></div>}
       />
-      <div className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 dark:border-white/[0.07] dark:bg-white/[0.03]">
-        <Globe className="mt-0.5 h-4 w-4 flex-shrink-0 text-slate-400" />
-        <div>
-          <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Webhook URLs are stored locally in your browser</p>
-          <p className="mt-0.5 text-xs text-slate-400">URLs are saved to localStorage. Each webhook fires a POST request with a JSON payload.</p>
-        </div>
-      </div>
+
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        {WEBHOOK_CONFIGS.map(({ key, label, desc, color }) => {
-          const c = colorMap[color]
-          const isSaved   = saved[key]
-          const isTesting = testing[key]
-          const res       = result[key]
-          return (
-            <GlassCard key={key} className="transition-all hover:shadow-sm dark:hover:border-white/[0.12]">
-              <div className="space-y-4 p-6">
-                <div className="flex items-start gap-3">
-                  <div className={cn('flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl ring-1', c.bg, c.ring)}>
-                    <Link2 className={cn('h-4 w-4', c.iconCls)} />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-semibold text-slate-900 dark:text-white" style={{ fontFamily: "'Space Grotesk',sans-serif" }}>{label}</h3>
-                    <p className="mt-0.5 text-xs text-slate-400">{desc}</p>
-                  </div>
+
+        {/* Receptionist Status */}
+        <GlassCard>
+          <div className="space-y-4 p-6">
+            <div className="flex items-start gap-3">
+              <div className={cn('flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl', paused ? 'bg-amber-500/10' : 'bg-emerald-500/10')}>
+                {paused ? <Pause className="h-4 w-4 text-amber-600 dark:text-amber-400" /> : <Phone className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />}
+              </div>
+              <div className="flex-1">
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-white" style={{ fontFamily: "'Space Grotesk',sans-serif" }}>Receptionist Status</h3>
+                <p className="mt-0.5 text-xs text-slate-400">Pause or resume the AI from answering calls</p>
+              </div>
+            </div>
+            <div className={cn('flex items-center gap-3 rounded-xl border px-4 py-3', paused ? 'border-amber-200 bg-amber-50 dark:border-amber-500/20 dark:bg-amber-500/5' : 'border-emerald-200 bg-emerald-50 dark:border-emerald-500/20 dark:bg-emerald-500/5')}>
+              <div className={cn('h-2.5 w-2.5 rounded-full', paused ? 'bg-amber-500' : 'bg-emerald-500 animate-pulse')} />
+              <span className={cn('text-sm font-medium', paused ? 'text-amber-700 dark:text-amber-400' : 'text-emerald-700 dark:text-emerald-400')}>{paused ? 'Paused — not answering calls' : 'Active — answering calls'}</span>
+            </div>
+            {paused
+              ? <button onClick={handleResume} disabled={busy.resume} className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 py-2.5 text-sm font-medium text-white shadow-lg shadow-emerald-500/20 transition-all hover:bg-emerald-500 disabled:opacity-50">{busy.resume ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}Resume receptionist</button>
+              : <button onClick={handlePause} disabled={busy.pause} className="flex w-full items-center justify-center gap-2 rounded-xl bg-amber-600 py-2.5 text-sm font-medium text-white shadow-lg shadow-amber-500/20 transition-all hover:bg-amber-500 disabled:opacity-50">{busy.pause ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Pause className="h-4 w-4" />}Pause receptionist</button>
+            }
+          </div>
+        </GlassCard>
+
+        {/* Test Call */}
+        <GlassCard>
+          <div className="space-y-4 p-6">
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-blue-500/10">
+                <PhoneCall className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-white" style={{ fontFamily: "'Space Grotesk',sans-serif" }}>Trigger Test Call</h3>
+                <p className="mt-0.5 text-xs text-slate-400">Send a test call to verify the AI is working</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 dark:border-white/[0.08] dark:bg-white/[0.04]">
+              <Phone className="h-3.5 w-3.5 flex-shrink-0 text-slate-400" />
+              <input type="tel" value={testPhone} onChange={e => setTestPhone(e.target.value)} placeholder="+1 555 000 0000"
+                className="flex-1 bg-transparent text-sm text-slate-700 placeholder-slate-400 outline-none dark:text-slate-300 dark:placeholder-slate-600" />
+            </div>
+            <button onClick={handleTestCall} disabled={busy.testCall} className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 py-2.5 text-sm font-medium text-white shadow-lg shadow-blue-500/20 transition-all hover:bg-blue-500 disabled:opacity-50">{busy.testCall ? <RefreshCw className="h-4 w-4 animate-spin" /> : <PhoneCall className="h-4 w-4" />}Trigger test call</button>
+          </div>
+        </GlassCard>
+
+        {/* Follow-up */}
+        <GlassCard>
+          <div className="space-y-4 p-6">
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-violet-500/10">
+                <Send className="h-4 w-4 text-violet-600 dark:text-violet-400" />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-white" style={{ fontFamily: "'Space Grotesk',sans-serif" }}>Send Follow-up</h3>
+                <p className="mt-0.5 text-xs text-slate-400">Trigger a follow-up message to a contact</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 dark:border-white/[0.08] dark:bg-white/[0.04]">
+              <Phone className="h-3.5 w-3.5 flex-shrink-0 text-slate-400" />
+              <input type="tel" value={fuPhone} onChange={e => setFuPhone(e.target.value)} placeholder="+1 555 000 0000"
+                className="flex-1 bg-transparent text-sm text-slate-700 placeholder-slate-400 outline-none dark:text-slate-300 dark:placeholder-slate-600" />
+            </div>
+            <ToolbarSelect value={fuChannel} onChange={setFuChannel}>
+              <option value="sms">SMS</option>
+              <option value="whatsapp">WhatsApp</option>
+              <option value="email">Email</option>
+            </ToolbarSelect>
+            <button onClick={handleFollowup} disabled={busy.followup} className="flex w-full items-center justify-center gap-2 rounded-xl bg-violet-600 py-2.5 text-sm font-medium text-white shadow-lg shadow-violet-500/20 transition-all hover:bg-violet-500 disabled:opacity-50">{busy.followup ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}Send follow-up</button>
+          </div>
+        </GlassCard>
+
+        {/* Action Log */}
+        <GlassCard>
+          <div className="space-y-3 p-6">
+            <h3 className="text-sm font-semibold text-slate-900 dark:text-white" style={{ fontFamily: "'Space Grotesk',sans-serif" }}>Action Log</h3>
+            {actionLog.length === 0
+              ? <p className="text-xs text-slate-400">No actions yet — use the controls to trigger webhooks.</p>
+              : <div className="max-h-52 space-y-1 overflow-y-auto">
+                  {actionLog.map((l, i) => (
+                    <div key={i} className="flex items-start gap-2 text-xs">
+                      <span className="shrink-0 font-mono text-slate-400">{l.time}</span>
+                      <span className={l.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}>{l.msg}</span>
+                    </div>
+                  ))}
                 </div>
-                <div className="flex gap-2">
-                  <div className="flex flex-1 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 transition-colors focus-within:border-violet-400 focus-within:bg-white dark:border-white/[0.08] dark:bg-white/[0.04] dark:focus-within:border-violet-500/40 dark:focus-within:bg-white/[0.06]">
-                    <Globe className="h-3.5 w-3.5 flex-shrink-0 text-slate-400" />
-                    <input type="url" value={urls[key] ?? ''} onChange={e => setUrls(p => ({ ...p, [key]: e.target.value }))}
-                      placeholder="https://your-webhook.com/endpoint"
-                      className="flex-1 bg-transparent text-xs text-slate-700 placeholder-slate-400 outline-none dark:text-slate-300 dark:placeholder-slate-600" />
-                  </div>
-                  <button onClick={() => handleSave(key)}
-                    className={cn('flex flex-shrink-0 items-center gap-1.5 rounded-xl px-3 py-2.5 text-xs font-medium transition-all',
-                      isSaved
-                        ? 'bg-emerald-500/10 text-emerald-600 ring-1 ring-emerald-500/20 dark:text-emerald-400'
-                        : 'bg-violet-600 text-white hover:bg-violet-500 shadow-lg shadow-violet-500/20')}>
-                    {isSaved ? <><CheckCircle2 className="h-3.5 w-3.5" />Saved</> : <><Save className="h-3.5 w-3.5" />Save</>}
-                  </button>
+            }
+          </div>
+        </GlassCard>
+
+        {/* Calendar Webhooks (admin only) */}
+        {user.role === 'admin' && (
+          <GlassCard className="lg:col-span-2">
+            <div className="space-y-4 p-6">
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-blue-500/10">
+                  <Calendar className="h-4 w-4 text-blue-600 dark:text-blue-400" />
                 </div>
-                <div className="flex items-center gap-3">
-                  <button onClick={() => handleTest(key)} disabled={!urls[key] || isTesting}
-                    className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 shadow-sm transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-slate-300 dark:hover:bg-white/[0.08] dark:hover:text-white">
-                    {isTesting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-                    {isTesting ? 'Testing…' : 'Test Webhook'}
-                  </button>
-                  {res === 'ok'  && <span className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400"><CheckCircle2 className="h-3.5 w-3.5" />Fired successfully</span>}
-                  {res === 'err' && <span className="flex items-center gap-1.5 text-xs text-red-600 dark:text-red-400"><AlertCircle   className="h-3.5 w-3.5" />Request failed</span>}
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900 dark:text-white" style={{ fontFamily: "'Space Grotesk',sans-serif" }}>Calendar Webhooks</h3>
+                  <p className="mt-0.5 text-xs text-slate-400">Per-client Google Calendar webhook URLs (stored in Supabase)</p>
                 </div>
               </div>
-            </GlassCard>
-          )
-        })}
+              {calClients.length === 0
+                ? <p className="text-xs text-slate-400">No clients found in the clients table.</p>
+                : calClients.map(c => (
+                    <div key={c.id} className="flex items-center gap-3">
+                      <div className="w-32 shrink-0">
+                        <p className="truncate text-sm font-medium text-slate-700 dark:text-slate-300">{c.name || c.id}</p>
+                        <p className={cn('text-xs', c.calendar_webhook_url ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400')}>
+                          {c.calendar_webhook_url ? '● Connected' : '○ No URL'}
+                        </p>
+                      </div>
+                      <div className="flex flex-1 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 dark:border-white/[0.08] dark:bg-white/[0.04]">
+                        <Globe className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                        <input type="url" value={calUrls[c.id] ?? ''} onChange={e => setCalUrls(u => ({ ...u, [c.id]: e.target.value }))}
+                          placeholder="https://…/webhook/get-calendar-events"
+                          className="flex-1 bg-transparent text-xs text-slate-700 placeholder-slate-400 outline-none dark:text-slate-300 dark:placeholder-slate-600" />
+                      </div>
+                      <button onClick={() => saveCalUrl(c.id)} className="shrink-0 rounded-xl bg-violet-600 px-3 py-2.5 text-xs font-medium text-white hover:bg-violet-500"><Save className="h-3.5 w-3.5" /></button>
+                    </div>
+                  ))
+              }
+            </div>
+          </GlassCard>
+        )}
+
+        {/* Webhook URLs */}
+        <GlassCard className="lg:col-span-2">
+          <div className="space-y-4 p-6">
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-slate-500/10">
+                <Link2 className="h-4 w-4 text-slate-600 dark:text-slate-400" />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-white" style={{ fontFamily: "'Space Grotesk',sans-serif" }}>Webhook URLs</h3>
+                <p className="mt-0.5 text-xs text-slate-400">Configure endpoints for each control action — stored locally in your browser</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {(['pause','resume','testCall','followup'] as const).map(k => (
+                <div key={k}>
+                  <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-slate-400">{k === 'testCall' ? 'Test Call' : k.charAt(0).toUpperCase() + k.slice(1)}</label>
+                  <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 dark:border-white/[0.08] dark:bg-white/[0.04]">
+                    <Globe className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                    <input type="url" value={wh[k] ?? ''} onChange={e => setWh(u => ({ ...u, [k]: e.target.value }))}
+                      placeholder="https://…"
+                      className="flex-1 bg-transparent text-xs text-slate-700 placeholder-slate-400 outline-none dark:text-slate-300 dark:placeholder-slate-600" />
+                  </div>
+                </div>
+              ))}
+            </div>
+            <button onClick={saveWebhooks}
+              className={cn('flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium transition-all',
+                whSaved ? 'bg-emerald-500/10 text-emerald-600 ring-1 ring-emerald-500/20 dark:text-emerald-400' : 'bg-violet-600 text-white hover:bg-violet-500 shadow-lg shadow-violet-500/20')}>
+              {whSaved ? <><CheckCircle2 className="h-4 w-4" />Saved</> : <><Save className="h-4 w-4" />Save URLs</>}
+            </button>
+          </div>
+        </GlassCard>
+
       </div>
     </div>
   )
@@ -1207,6 +1515,28 @@ export default function DrizzleBotDashboard() {
 
   useEffect(() => { if (user && user.role !== 'admin' && page === 'controls') setPage('overview') }, [page, user])
 
+  useEffect(() => {
+    if (!user) return
+    const channel = sb.channel('dashboard-realtime')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'calls' }, ({ new: r }: any) => {
+        const n: Notification = { id: String(Date.now()), type: 'call', text: `New call from ${r.caller_number || 'Unknown'}`, time: 'just now', read: false }
+        setNotifications(ns => [n, ...ns.slice(0, 49)])
+        showToast(n.text, 'info')
+      })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'appointments' }, ({ new: r }: any) => {
+        const n: Notification = { id: String(Date.now()), type: 'appointment', text: `New appointment: ${r.appointment_type || 'Appointment'} for ${r.email || r.contact_phone || 'Unknown'}`, time: 'just now', read: false }
+        setNotifications(ns => [n, ...ns.slice(0, 49)])
+        showToast(n.text, 'info')
+      })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'contacts' }, ({ new: r }: any) => {
+        const n: Notification = { id: String(Date.now()), type: 'message', text: `New contact registered: ${r.name || r.phone_number || 'Unknown'}`, time: 'just now', read: false }
+        setNotifications(ns => [n, ...ns.slice(0, 49)])
+        showToast(n.text, 'info')
+      })
+      .subscribe()
+    return () => { sb.removeChannel(channel) }
+  }, [user])
+
   const handleSignOut = async () => { await sb.auth.signOut(); setUser(null) }
   const unreadCount = notifications.filter(n => !n.read).length
   const shift = sidebarCollapsed ? 'ml-[64px]' : 'ml-64'
@@ -1262,9 +1592,10 @@ export default function DrizzleBotDashboard() {
           {page === 'calls'        && <CallLogsPage     user={user} activeClientId={activeClientId} />}
           {page === 'contacts'     && <ContactsPage     user={user} activeClientId={activeClientId} />}
           {page === 'messages'     && <MessagesPage     user={user} activeClientId={activeClientId} />}
-          {page === 'controls' && user.role === 'admin' && <ControlsPage />}
+          {page === 'controls' && user.role === 'admin' && <ControlsPage user={user} activeClientId={activeClientId} />}
         </main>
       </div>
+      <ToastContainer />
     </div>
   )
 }
