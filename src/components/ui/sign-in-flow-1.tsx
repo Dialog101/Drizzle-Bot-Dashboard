@@ -237,21 +237,30 @@ export const CanvasRevealEffect = ({
 // ─── Mini Navbar ──────────────────────────────────────────────────────────────
 
 function MiniNavbar({ dark, onToggleDark }: { dark: boolean; onToggleDark: () => void }) {
+  const dotCls = dark ? "bg-gray-200" : "bg-slate-500";
   return (
-    <header className="fixed right-6 top-6 z-20 flex items-center gap-3 rounded-full border border-[#333] bg-[#1f1f1f57] px-4 py-2.5 backdrop-blur-sm">
+    <header className={cn(
+      "fixed right-6 top-6 z-20 flex items-center gap-3 rounded-full border px-4 py-2.5 backdrop-blur-sm transition-colors duration-300",
+      dark ? "border-[#333] bg-[#1f1f1f57]" : "border-slate-200 bg-white/80 shadow-sm"
+    )}>
       {/* 4-dot logo */}
       <div className="relative flex h-5 w-5 flex-shrink-0 items-center justify-center">
-        <span className="absolute left-1/2 top-0 h-1.5 w-1.5 -translate-x-1/2 rounded-full bg-gray-200 opacity-80" />
-        <span className="absolute left-0 top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full bg-gray-200 opacity-80" />
-        <span className="absolute right-0 top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full bg-gray-200 opacity-80" />
-        <span className="absolute bottom-0 left-1/2 h-1.5 w-1.5 -translate-x-1/2 rounded-full bg-gray-200 opacity-80" />
+        <span className={cn("absolute left-1/2 top-0 h-1.5 w-1.5 -translate-x-1/2 rounded-full opacity-80", dotCls)} />
+        <span className={cn("absolute left-0 top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full opacity-80", dotCls)} />
+        <span className={cn("absolute right-0 top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full opacity-80", dotCls)} />
+        <span className={cn("absolute bottom-0 left-1/2 h-1.5 w-1.5 -translate-x-1/2 rounded-full opacity-80", dotCls)} />
       </div>
 
       {/* Theme toggle */}
       <button
         onClick={onToggleDark}
         aria-label="Toggle theme"
-        className="flex h-7 w-7 items-center justify-center rounded-full border border-[#444] bg-[rgba(31,31,31,0.8)] text-gray-300 transition-colors hover:border-white/50 hover:text-white"
+        className={cn(
+          "flex h-7 w-7 items-center justify-center rounded-full border transition-colors",
+          dark
+            ? "border-[#444] bg-[rgba(31,31,31,0.8)] text-gray-300 hover:border-white/50 hover:text-white"
+            : "border-slate-200 bg-slate-100 text-slate-500 hover:border-slate-400 hover:text-slate-900"
+        )}
       >
         {dark ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
       </button>
@@ -348,24 +357,54 @@ export const SignInPage = ({ className, onLogin, dark, onToggleDark }: SignInPag
     setReverseCanvas(false); setInitialCanvas(true);
   };
 
+  // Shorthand theme helpers
+  const bg        = dark ? "bg-black"           : "bg-slate-50";
+  const canvasBg  = dark ? "bg-black"           : "bg-slate-50";
+  const dotColors: [number,number,number][] = dark ? [[255,255,255],[255,255,255]] : [[109,40,217],[139,92,246]];
+  const radial    = dark
+    ? "bg-[radial-gradient(circle_at_center,_rgba(0,0,0,0.85)_0%,_transparent_70%)]"
+    : "bg-[radial-gradient(circle_at_center,_rgba(248,250,252,0.85)_0%,_transparent_70%)]";
+  const topFade   = dark ? "from-black" : "from-slate-50";
+  const h1        = dark ? "text-white"          : "text-slate-900";
+  const sub       = dark ? "text-white/60"       : "text-slate-500";
+  const muted     = dark ? "text-white/40"       : "text-slate-400";
+  const divider   = dark ? "bg-white/10"         : "bg-slate-200";
+  const inputCls  = dark
+    ? "border-white/10 text-white placeholder-white/30 focus:border-white/30"
+    : "border-slate-200 text-slate-900 placeholder-slate-400 focus:border-violet-400 bg-white/60";
+  const arrowBtn  = dark
+    ? "bg-white/10 text-white hover:bg-white/20"
+    : "bg-slate-200 text-slate-700 hover:bg-slate-300";
+  const codeBorder = dark ? "border-white/10"   : "border-slate-200";
+  const codeText   = dark ? "text-white"         : "text-slate-900";
+  const codeGhost  = dark ? "text-white/20"      : "text-slate-300";
+  const codeSep    = dark ? "text-white/20"      : "text-slate-300";
+  const resendCls  = dark ? "text-white/50 hover:text-white/70" : "text-slate-400 hover:text-slate-600";
+  const backBtn    = dark ? "bg-white text-black hover:bg-white/90" : "bg-slate-900 text-white hover:bg-slate-700";
+  const contActive = dark ? "bg-white text-black hover:bg-white/90" : "bg-slate-900 text-white hover:bg-slate-700";
+  const contInactive = dark ? "border-white/10 bg-[#111] text-white/30" : "border-slate-200 bg-slate-100 text-slate-300";
+  const legalCls  = dark ? "text-white/40" : "text-slate-400";
+  const legalLink = dark ? "text-white/40 hover:text-white/60" : "text-slate-400 hover:text-slate-600";
+  const successBtn = dark ? "bg-white text-black hover:bg-white/90" : "bg-slate-900 text-white hover:bg-slate-700";
+
   return (
-    <div className={cn("relative flex min-h-screen w-full flex-col bg-black", className)}>
+    <div className={cn("relative flex min-h-screen w-full flex-col transition-colors duration-300", bg, className)}>
       {/* WebGL dot-matrix background */}
       <div className="absolute inset-0 z-0">
         {initialCanvas && (
           <div className="absolute inset-0">
-            <CanvasRevealEffect animationSpeed={3} containerClassName="bg-black"
-              colors={[[255,255,255],[255,255,255]]} dotSize={6} reverse={false} />
+            <CanvasRevealEffect animationSpeed={3} containerClassName={canvasBg}
+              colors={dotColors} dotSize={6} reverse={false} />
           </div>
         )}
         {reverseCanvas && (
           <div className="absolute inset-0">
-            <CanvasRevealEffect animationSpeed={4} containerClassName="bg-black"
-              colors={[[255,255,255],[255,255,255]]} dotSize={6} reverse={true} />
+            <CanvasRevealEffect animationSpeed={4} containerClassName={canvasBg}
+              colors={dotColors} dotSize={6} reverse={true} />
           </div>
         )}
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_rgba(0,0,0,1)_0%,_transparent_100%)]" />
-        <div className="absolute left-0 right-0 top-0 h-1/3 bg-gradient-to-b from-black to-transparent" />
+        <div className={cn("absolute inset-0", radial)} />
+        <div className={cn("absolute left-0 right-0 top-0 h-1/3 bg-gradient-to-b to-transparent", topFade)} />
       </div>
 
       {/* Content */}
@@ -383,15 +422,15 @@ export const SignInPage = ({ className, onLogin, dark, onToggleDark }: SignInPag
                   transition={{ duration: 0.4, ease: "easeOut" }}
                   className="space-y-6 text-center">
                   <div className="space-y-1">
-                    <h1 className="text-[2.5rem] font-bold leading-[1.1] tracking-tight text-white">Welcome back</h1>
-                    <p className="text-[1.4rem] font-light text-white/70">Sign in to DrizzleBot</p>
+                    <h1 className={cn("text-[2.5rem] font-bold leading-[1.1] tracking-tight", h1)}>Welcome back</h1>
+                    <p className={cn("text-[1.4rem] font-light", sub)}>Sign in to DrizzleBot</p>
                   </div>
 
                   <div className="space-y-4">
                     <div className="flex items-center gap-4">
-                      <div className="h-px flex-1 bg-white/10" />
-                      <span className="text-sm text-white/40">enter your email</span>
-                      <div className="h-px flex-1 bg-white/10" />
+                      <div className={cn("h-px flex-1", divider)} />
+                      <span className={cn("text-sm", muted)}>enter your email</span>
+                      <div className={cn("h-px flex-1", divider)} />
                     </div>
 
                     <form onSubmit={handleEmailSubmit}>
@@ -399,10 +438,10 @@ export const SignInPage = ({ className, onLogin, dark, onToggleDark }: SignInPag
                         <input
                           type="email" required placeholder="you@company.com" value={email}
                           onChange={e => { setEmail(e.target.value); setError(""); }}
-                          className="w-full rounded-full border border-white/10 bg-transparent py-3 px-4 text-center text-white placeholder-white/30 backdrop-blur-sm outline-none transition-colors focus:border-white/30"
+                          className={cn("w-full rounded-full border py-3 px-4 text-center backdrop-blur-sm outline-none transition-colors", inputCls)}
                         />
                         <button type="submit" disabled={submitting}
-                          className="absolute right-1.5 top-1.5 flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-white/10 text-white transition-colors hover:bg-white/20 disabled:opacity-50 group">
+                          className={cn("absolute right-1.5 top-1.5 flex h-9 w-9 items-center justify-center overflow-hidden rounded-full transition-colors disabled:opacity-50 group", arrowBtn)}>
                           <span className="relative block h-full w-full overflow-hidden">
                             <span className="absolute inset-0 flex items-center justify-center transition-transform duration-300 group-hover:translate-x-full">→</span>
                             <span className="absolute inset-0 flex -translate-x-full items-center justify-center transition-transform duration-300 group-hover:translate-x-0">→</span>
@@ -413,10 +452,10 @@ export const SignInPage = ({ className, onLogin, dark, onToggleDark }: SignInPag
                     </form>
                   </div>
 
-                  <p className="pt-10 text-xs text-white/40">
+                  <p className={cn("pt-10 text-xs", legalCls)}>
                     By signing in you agree to the{" "}
-                    <Link href="#" className="underline hover:text-white/60 transition-colors">Privacy Policy</Link>{" "}and{" "}
-                    <Link href="#" className="underline hover:text-white/60 transition-colors">Terms of Service</Link>.
+                    <Link href="#" className={cn("underline transition-colors", legalLink)}>Privacy Policy</Link>{" "}and{" "}
+                    <Link href="#" className={cn("underline transition-colors", legalLink)}>Terms of Service</Link>.
                   </p>
                 </motion.div>
               )}
@@ -428,12 +467,15 @@ export const SignInPage = ({ className, onLogin, dark, onToggleDark }: SignInPag
                   transition={{ duration: 0.4, ease: "easeOut" }}
                   className="space-y-6 text-center">
                   <div className="space-y-1">
-                    <h1 className="text-[2.5rem] font-bold leading-[1.1] tracking-tight text-white">Check your email</h1>
-                    <p className="text-[1.1rem] font-light text-white/50">Enter the 6-digit code sent to<br /><span className="text-white/70">{email}</span></p>
+                    <h1 className={cn("text-[2.5rem] font-bold leading-[1.1] tracking-tight", h1)}>Check your email</h1>
+                    <p className={cn("text-[1.1rem] font-light", sub)}>
+                      Enter the 6-digit code sent to<br />
+                      <span className={dark ? "text-white/70" : "text-slate-700"}>{email}</span>
+                    </p>
                   </div>
 
                   <div className="w-full">
-                    <div className="relative rounded-full border border-white/10 bg-transparent px-5 py-4">
+                    <div className={cn("relative rounded-full border bg-transparent px-5 py-4", codeBorder)}>
                       <div className="flex items-center justify-center">
                         {code.map((digit, i) => (
                           <div key={i} className="flex items-center">
@@ -445,16 +487,16 @@ export const SignInPage = ({ className, onLogin, dark, onToggleDark }: SignInPag
                                 onChange={e => handleCodeChange(i, e.target.value)}
                                 onKeyDown={e => handleKeyDown(i, e)}
                                 onPaste={handlePaste}
-                                className="w-8 appearance-none border-none bg-transparent text-center text-xl text-white outline-none focus:ring-0"
+                                className={cn("w-8 appearance-none border-none bg-transparent text-center text-xl outline-none focus:ring-0", codeText)}
                                 style={{ caretColor: "transparent" }}
                               />
                               {!digit && (
                                 <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                                  <span className="text-xl text-white/20">0</span>
+                                  <span className={cn("text-xl", codeGhost)}>0</span>
                                 </div>
                               )}
                             </div>
-                            {i < 5 && <span className="text-xl text-white/20">|</span>}
+                            {i < 5 && <span className={cn("text-xl", codeSep)}>|</span>}
                           </div>
                         ))}
                       </div>
@@ -463,7 +505,7 @@ export const SignInPage = ({ className, onLogin, dark, onToggleDark }: SignInPag
                   </div>
 
                   <div className="flex items-center justify-center gap-2">
-                    <motion.p className="cursor-pointer text-sm text-white/50 transition-colors hover:text-white/70"
+                    <motion.p className={cn("cursor-pointer text-sm transition-colors", resendCls)}
                       whileHover={{ scale: 1.02 }} transition={{ duration: 0.2 }}
                       onClick={async () => {
                         await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: false } });
@@ -488,7 +530,7 @@ export const SignInPage = ({ className, onLogin, dark, onToggleDark }: SignInPag
 
                   <div className="flex w-full gap-3">
                     <motion.button onClick={handleBack}
-                      className="w-[30%] rounded-full bg-white px-8 py-3 font-medium text-black transition-colors hover:bg-white/90"
+                      className={cn("w-[30%] rounded-full px-8 py-3 font-medium transition-colors", backBtn)}
                       whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} transition={{ duration: 0.2 }}>
                       Back
                     </motion.button>
@@ -496,18 +538,16 @@ export const SignInPage = ({ className, onLogin, dark, onToggleDark }: SignInPag
                       disabled={!code.every(d => d !== "") || submitting}
                       className={cn(
                         "flex-1 rounded-full py-3 font-medium transition-all duration-300 border",
-                        code.every(d => d !== "") && !submitting
-                          ? "cursor-pointer border-transparent bg-white text-black hover:bg-white/90"
-                          : "cursor-not-allowed border-white/10 bg-[#111] text-white/50"
+                        code.every(d => d !== "") && !submitting ? contActive : contInactive
                       )}>
                       {submitting ? "Verifying…" : "Continue"}
                     </motion.button>
                   </div>
 
-                  <p className="pt-10 text-xs text-white/40">
+                  <p className={cn("pt-10 text-xs", legalCls)}>
                     By signing in you agree to the{" "}
-                    <Link href="#" className="underline hover:text-white/60 transition-colors">Privacy Policy</Link>{" "}and{" "}
-                    <Link href="#" className="underline hover:text-white/60 transition-colors">Terms of Service</Link>.
+                    <Link href="#" className={cn("underline transition-colors", legalLink)}>Privacy Policy</Link>{" "}and{" "}
+                    <Link href="#" className={cn("underline transition-colors", legalLink)}>Terms of Service</Link>.
                   </p>
                 </motion.div>
               )}
@@ -519,19 +559,19 @@ export const SignInPage = ({ className, onLogin, dark, onToggleDark }: SignInPag
                   transition={{ duration: 0.4, ease: "easeOut", delay: 0.3 }}
                   className="space-y-6 text-center">
                   <div className="space-y-1">
-                    <h1 className="text-[2.5rem] font-bold leading-[1.1] tracking-tight text-white">You're in!</h1>
-                    <p className="text-[1.25rem] font-light text-white/50">Welcome to DrizzleBot</p>
+                    <h1 className={cn("text-[2.5rem] font-bold leading-[1.1] tracking-tight", h1)}>You're in!</h1>
+                    <p className={cn("text-[1.25rem] font-light", sub)}>Welcome to DrizzleBot</p>
                   </div>
                   <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
                     transition={{ duration: 0.5, delay: 0.5 }} className="py-10">
-                    <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-white to-white/70">
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-black" viewBox="0 0 20 20" fill="currentColor">
+                    <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-violet-500 to-indigo-600">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-white" viewBox="0 0 20 20" fill="currentColor">
                         <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
                       </svg>
                     </div>
                   </motion.div>
                   <motion.button initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 1 }}
-                    className="w-full rounded-full bg-white py-3 font-medium text-black transition-colors hover:bg-white/90">
+                    className={cn("w-full rounded-full py-3 font-medium transition-colors", successBtn)}>
                     Redirecting to dashboard…
                   </motion.button>
                 </motion.div>
