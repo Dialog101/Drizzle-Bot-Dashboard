@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { createClient } from '@supabase/supabase-js'
 import { SignInPage } from '@/components/ui/sign-in-flow-1'
+import { Area, AreaChart, ResponsiveContainer, Tooltip } from 'recharts'
 import {
   LayoutDashboard, CalendarDays, Calendar, Phone, Users, MessageSquare,
   Settings2, Bell, Search, LogOut, ChevronDown, Moon, Sun, TrendingUp,
@@ -279,27 +280,79 @@ function GlassCard({ children, className }: { children: React.ReactNode; classNa
   )
 }
 
-function StatCard({ label, value, icon, accent, trend, loading }: {
+// Sparkline data sets — one per card, intentionally varied shapes
+const SPARK: Record<string, { value: number }[]> = {
+  appointments: [
+    {value:3},{value:7},{value:4},{value:9},{value:5},{value:11},{value:6},
+    {value:13},{value:8},{value:5},{value:10},{value:7},{value:12},{value:9},{value:14},
+  ],
+  calls: [
+    {value:10},{value:22},{value:14},{value:30},{value:18},{value:26},{value:12},
+    {value:34},{value:20},{value:15},{value:28},{value:16},{value:24},{value:19},{value:31},
+  ],
+  contacts: [
+    {value:50},{value:80},{value:60},{value:110},{value:75},{value:130},{value:90},
+    {value:150},{value:100},{value:70},{value:120},{value:85},{value:140},{value:105},{value:160},
+  ],
+  messages: [
+    {value:20},{value:45},{value:28},{value:60},{value:35},{value:55},{value:25},
+    {value:70},{value:40},{value:30},{value:52},{value:38},{value:65},{value:42},{value:75},
+  ],
+}
+
+function StatCard({ label, value, icon, color, gradientId, sparkKey, trend, loading }: {
   label: string; value: number | string; icon: React.ReactNode
-  accent: string; trend?: { value: number; up: boolean }; loading?: boolean
+  color: string; gradientId: string; sparkKey: keyof typeof SPARK
+  trend?: { value: number; up: boolean }; loading?: boolean
 }) {
   return (
-    <div className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-lg dark:border-white/[0.08] dark:bg-white/[0.04] dark:shadow-none dark:hover:border-white/[0.14] dark:hover:shadow-black/30">
-      <div className={cn('pointer-events-none absolute -right-6 -top-6 h-24 w-24 rounded-full opacity-10 blur-2xl transition-opacity group-hover:opacity-20', accent)} />
-      <div className="relative flex items-start justify-between">
+    <div className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-lg dark:border-white/[0.08] dark:bg-white/[0.04] dark:shadow-none dark:hover:border-white/[0.14] dark:hover:shadow-black/30">
+      {/* Header: icon + label */}
+      <div className="mb-4 flex items-center gap-2">
+        <span style={{ color }}>{icon}</span>
+        <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">{label}</p>
+      </div>
+
+      {/* Bottom: value left, chart right */}
+      <div className="flex items-end justify-between gap-3">
         <div>
-          <p className="text-xs font-medium uppercase tracking-widest text-slate-400 dark:text-slate-500">{label}</p>
+          <p className="text-xs text-slate-400 dark:text-slate-500 mb-1">Last 28 days</p>
           {loading
-            ? <div className="mt-2.5 h-8 w-20 animate-pulse rounded-lg bg-slate-100 dark:bg-white/10" />
-            : <p className="mt-1.5 text-3xl font-bold tracking-tight text-slate-900 dark:text-white" style={{ fontFamily: "'Space Grotesk',sans-serif" }}>{value}</p>}
+            ? <div className="h-9 w-16 animate-pulse rounded-lg bg-slate-100 dark:bg-white/10" />
+            : <p className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white" style={{ fontFamily: "'Space Grotesk',sans-serif" }}>{value}</p>}
           {trend && !loading && (
-            <div className={cn('mt-2 flex items-center gap-1 text-xs font-medium', trend.up ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')}>
-              {trend.up ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
+            <div className={cn('mt-1.5 flex items-center gap-1 text-xs font-medium', trend.up ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-500 dark:text-red-400')}>
+              {trend.up ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
               {Math.abs(trend.value)}% vs last week
             </div>
           )}
         </div>
-        <div className={cn('flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl', accent)}>{icon}</div>
+
+        {/* Sparkline */}
+        <div className="h-16 w-36 shrink-0">
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={SPARK[sparkKey]} margin={{ top: 4, right: 4, left: 4, bottom: 4 }}>
+              <defs>
+                <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={color} stopOpacity={0.3} />
+                  <stop offset="100%" stopColor={color} stopOpacity={0.03} />
+                </linearGradient>
+                <filter id={`shadow-${gradientId}`} x="-50%" y="-50%" width="200%" height="200%">
+                  <feDropShadow dx="1" dy="1" stdDeviation="2" floodColor="rgba(0,0,0,0.4)" />
+                </filter>
+              </defs>
+              <Tooltip
+                cursor={{ stroke: color, strokeWidth: 1, strokeDasharray: '3 3' }}
+                content={({ active, payload }) => active && payload?.length
+                  ? <div className="rounded-lg border border-slate-200 bg-white/95 px-2 py-1 text-xs font-semibold shadow-lg backdrop-blur-sm dark:border-white/10 dark:bg-slate-900/95" style={{ color }}>{payload[0].value}</div>
+                  : null}
+              />
+              <Area type="monotone" dataKey="value" stroke={color} strokeWidth={2}
+                fill={`url(#${gradientId})`} dot={false}
+                activeDot={{ r: 4, fill: color, stroke: 'white', strokeWidth: 2, filter: `url(#shadow-${gradientId})` }} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
       </div>
     </div>
   )
@@ -568,10 +621,10 @@ function OverviewPage({ user, activeClientId }: PageProps) {
   }, [loadData])
 
   const cards = [
-    { label: "Today's Appointments", value: stats.todayAppointments, accent: 'bg-violet-600', icon: <CalendarDays className="h-5 w-5 text-white" />, trend: { value: 12, up: true } },
-    { label: 'Total Calls',          value: stats.totalCalls,        accent: 'bg-blue-600',   icon: <Phone         className="h-5 w-5 text-white" />, trend: { value: 8,  up: true } },
-    { label: 'Contacts',             value: stats.totalContacts,     accent: 'bg-emerald-600',icon: <Users         className="h-5 w-5 text-white" />, trend: { value: 3,  up: true } },
-    { label: 'Messages',             value: stats.totalMessages,     accent: 'bg-amber-600',  icon: <MessageSquare className="h-5 w-5 text-white" />, trend: { value: 5,  up: false } },
+    { label: "Today's Appointments", value: stats.todayAppointments, color: '#7c3aed', gradientId: 'grad-appt',  sparkKey: 'appointments' as const, icon: <CalendarDays className="h-5 w-5" />, trend: { value: 12, up: true  } },
+    { label: 'Total Calls',          value: stats.totalCalls,        color: '#2563eb', gradientId: 'grad-calls', sparkKey: 'calls'        as const, icon: <Phone         className="h-5 w-5" />, trend: { value: 8,  up: true  } },
+    { label: 'Contacts',             value: stats.totalContacts,     color: '#059669', gradientId: 'grad-cont',  sparkKey: 'contacts'     as const, icon: <Users         className="h-5 w-5" />, trend: { value: 3,  up: true  } },
+    { label: 'Messages',             value: stats.totalMessages,     color: '#d97706', gradientId: 'grad-msg',   sparkKey: 'messages'     as const, icon: <MessageSquare className="h-5 w-5" />, trend: { value: 5,  up: false } },
   ]
 
   return (
