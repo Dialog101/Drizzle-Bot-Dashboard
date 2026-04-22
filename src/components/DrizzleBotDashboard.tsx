@@ -46,7 +46,7 @@ interface Message {
   sender_phone: string; sender_name?: string; body: string; client_id: string
 }
 interface OverviewStats { todayAppointments: number; totalCalls: number; totalContacts: number; totalMessages: number }
-interface Notification { id: string; type: 'call' | 'appointment' | 'message'; text: string; time: string; read: boolean }
+interface Notification { id: string; type: 'call' | 'appointment' | 'message'; text: string; timestamp: string; read: boolean }
 interface ToastItem { id: string; msg: string; type: 'success' | 'error' | 'info' }
 
 type PageProps = { user: AppUser; activeClientId: string | null }
@@ -79,6 +79,13 @@ function cn(...c: (string | undefined | false | null)[]) { return c.filter(Boole
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+function timeAgo(iso: string) {
+  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000)
+  if (s < 60)  return 'just now'
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`
+  return `${Math.floor(s / 86400)}d ago`
 }
 function formatDuration(s: number) {
   return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`
@@ -370,8 +377,12 @@ function ExportButton({ onClick }: { onClick: () => void }) {
 
 // ─── Notifications Panel ──────────────────────────────────────────────────────
 
-function NotificationsPanel({ notifications, onClose, onMarkRead }: {
-  notifications: Notification[]; onClose: () => void; onMarkRead: (id: string) => void
+function NotificationsPanel({ notifications, onClose, onMarkRead, onMarkAllRead, onClear }: {
+  notifications: Notification[]
+  onClose: () => void
+  onMarkRead: (id: string) => void
+  onMarkAllRead: () => void
+  onClear: () => void
 }) {
   const typeIcon = { call: <Phone className="h-3.5 w-3.5" />, appointment: <CalendarDays className="h-3.5 w-3.5" />, message: <MessageSquare className="h-3.5 w-3.5" /> }
   const typeColor = { call: 'bg-blue-500/20 text-blue-600 dark:text-blue-400', appointment: 'bg-violet-500/20 text-violet-600 dark:text-violet-400', message: 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400' }
@@ -383,21 +394,37 @@ function NotificationsPanel({ notifications, onClose, onMarkRead }: {
           <span className="text-sm font-semibold text-slate-900 dark:text-white" style={{ fontFamily: "'Space Grotesk',sans-serif" }}>Notifications</span>
           {unread > 0 && <span className="rounded-full bg-violet-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{unread}</span>}
         </div>
-        <button onClick={onClose} className="rounded-lg p-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-white/10 dark:hover:text-white"><X className="h-4 w-4" /></button>
-      </div>
-      <div className="max-h-[340px] overflow-y-auto py-1">
-        {notifications.length === 0 ? <p className="px-4 py-10 text-center text-sm text-slate-400">No notifications</p> :
-          notifications.map(n => (
-            <button key={n.id} onClick={() => onMarkRead(n.id)}
-              className={cn('flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-slate-50 dark:hover:bg-white/[0.04]', !n.read && 'bg-violet-50/50 dark:bg-white/[0.02]')}>
-              <div className={cn('mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg', typeColor[n.type])}>{typeIcon[n.type]}</div>
-              <div className="min-w-0 flex-1">
-                <p className={cn('text-sm leading-snug', n.read ? 'text-slate-400' : 'text-slate-800 dark:text-slate-200')}>{n.text}</p>
-                <p className="mt-0.5 text-xs text-slate-400">{n.time}</p>
-              </div>
-              {!n.read && <div className="mt-2 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-violet-500" />}
+        <div className="flex items-center gap-1">
+          {unread > 0 && (
+            <button onClick={onMarkAllRead} className="rounded-lg px-2 py-1 text-[11px] font-medium text-violet-600 transition-colors hover:bg-violet-50 dark:text-violet-400 dark:hover:bg-violet-500/10">
+              Mark all read
             </button>
-          ))}
+          )}
+          {notifications.length > 0 && (
+            <button onClick={onClear} className="rounded-lg px-2 py-1 text-[11px] font-medium text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-white/10 dark:hover:text-slate-300">
+              Clear
+            </button>
+          )}
+          <button onClick={onClose} className="rounded-lg p-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-white/10 dark:hover:text-white"><X className="h-4 w-4" /></button>
+        </div>
+      </div>
+      <div className="max-h-[360px] overflow-y-auto py-1">
+        {notifications.length === 0 ? (
+          <div className="flex flex-col items-center justify-center gap-2 px-4 py-12">
+            <Bell className="h-7 w-7 text-slate-300 dark:text-slate-600" />
+            <p className="text-sm text-slate-400">You're all caught up</p>
+          </div>
+        ) : notifications.map(n => (
+          <button key={n.id} onClick={() => onMarkRead(n.id)}
+            className={cn('flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-slate-50 dark:hover:bg-white/[0.04]', !n.read && 'bg-violet-50/50 dark:bg-white/[0.02]')}>
+            <div className={cn('mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg', typeColor[n.type])}>{typeIcon[n.type]}</div>
+            <div className="min-w-0 flex-1">
+              <p className={cn('text-sm leading-snug', n.read ? 'text-slate-400' : 'text-slate-800 dark:text-slate-200')}>{n.text}</p>
+              <p className="mt-0.5 text-xs text-slate-400">{timeAgo(n.timestamp)}</p>
+            </div>
+            {!n.read && <div className="mt-2 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-violet-500" />}
+          </button>
+        ))}
       </div>
     </div>
   )
@@ -1703,12 +1730,7 @@ export default function DrizzleBotDashboard() {
   const [clients, setClients]                 = useState<Client[]>([])
   const [activeClientId, setActiveClientId]   = useState<string | null>(null)
   const [notifOpen, setNotifOpen]             = useState(false)
-  const [notifications, setNotifications]     = useState<Notification[]>([
-    { id: '1', type: 'call',        text: 'New call from +1 (555) 012-3456',               time: '2m ago',  read: false },
-    { id: '2', type: 'appointment', text: 'Appointment booked: John Smith — Consultation', time: '14m ago', read: false },
-    { id: '3', type: 'message',     text: 'New message from Sarah Johnson via SMS',        time: '1h ago',  read: true  },
-    { id: '4', type: 'call',        text: 'Missed call from +1 (555) 987-6543 · 3 min',   time: '2h ago',  read: true  },
-  ])
+  const [notifications, setNotifications]     = useState<Notification[]>([])
   const notifRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -1739,21 +1761,19 @@ export default function DrizzleBotDashboard() {
 
   useEffect(() => {
     if (!user) return
+    const push = (n: Notification) => { setNotifications(ns => [n, ...ns.slice(0, 49)]); showToast(n.text, 'info') }
     const channel = sb.channel('dashboard-realtime')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'calls' }, ({ new: r }: any) => {
-        const n: Notification = { id: String(Date.now()), type: 'call', text: `New call from ${r.caller_number || 'Unknown'}`, time: 'just now', read: false }
-        setNotifications(ns => [n, ...ns.slice(0, 49)])
-        showToast(n.text, 'info')
+        push({ id: String(Date.now()), type: 'call', text: `New call from ${r.caller_number || 'Unknown'}`, timestamp: new Date().toISOString(), read: false })
       })
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'appointments' }, ({ new: r }: any) => {
-        const n: Notification = { id: String(Date.now()), type: 'appointment', text: `New appointment: ${r.appointment_type || 'Appointment'} for ${r.email || r.contact_phone || 'Unknown'}`, time: 'just now', read: false }
-        setNotifications(ns => [n, ...ns.slice(0, 49)])
-        showToast(n.text, 'info')
+        push({ id: String(Date.now()), type: 'appointment', text: `New appointment: ${r.appointment_type || 'Appointment'} for ${r.email || r.contact_phone || 'Unknown'}`, timestamp: new Date().toISOString(), read: false })
+      })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, ({ new: r }: any) => {
+        push({ id: String(Date.now()), type: 'message', text: `New message from ${r.sender_phone || r.sender_name || 'Unknown'} via ${r.channel || 'SMS'}`, timestamp: new Date().toISOString(), read: false })
       })
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'contacts' }, ({ new: r }: any) => {
-        const n: Notification = { id: String(Date.now()), type: 'message', text: `New contact registered: ${r.name || r.phone_number || 'Unknown'}`, time: 'just now', read: false }
-        setNotifications(ns => [n, ...ns.slice(0, 49)])
-        showToast(n.text, 'info')
+        push({ id: String(Date.now()), type: 'message', text: `New contact: ${r.name || r.phone_number || 'Unknown'}`, timestamp: new Date().toISOString(), read: false })
       })
       .subscribe()
     return () => { sb.removeChannel(channel) }
@@ -1803,7 +1823,9 @@ export default function DrizzleBotDashboard() {
               {unreadCount > 0 && <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-violet-600 text-[10px] font-bold text-white">{unreadCount}</span>}
             </button>
             {notifOpen && <NotificationsPanel notifications={notifications} onClose={() => setNotifOpen(false)}
-              onMarkRead={id => setNotifications(ns => ns.map(n => n.id === id ? { ...n, read: true } : n))} />}
+              onMarkRead={id => setNotifications(ns => ns.map(n => n.id === id ? { ...n, read: true } : n))}
+              onMarkAllRead={() => setNotifications(ns => ns.map(n => ({ ...n, read: true })))}
+              onClear={() => setNotifications([])} />}
           </div>
         </header>
 
