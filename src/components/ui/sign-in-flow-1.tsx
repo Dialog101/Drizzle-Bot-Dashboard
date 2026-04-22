@@ -394,17 +394,21 @@ export const SignInPage = ({ className, onLogin, dark, onToggleDark }: SignInPag
         {initialCanvas && (
           <div className="absolute inset-0">
             <CanvasRevealEffect animationSpeed={3} containerClassName={canvasBg}
-              colors={dotColors} dotSize={6} reverse={false} />
+              colors={dotColors} dotSize={6} reverse={false} showGradient={false} />
           </div>
         )}
         {reverseCanvas && (
           <div className="absolute inset-0">
             <CanvasRevealEffect animationSpeed={4} containerClassName={canvasBg}
-              colors={dotColors} dotSize={6} reverse={true} />
+              colors={dotColors} dotSize={6} reverse={true} showGradient={false} />
           </div>
         )}
+        {/* Radial vignette — clears the centre so text is readable */}
         <div className={cn("absolute inset-0", radial)} />
+        {/* Top fade */}
         <div className={cn("absolute left-0 right-0 top-0 h-1/3 bg-gradient-to-b to-transparent", topFade)} />
+        {/* Bottom fade — matches bg so dots don't bleed into black */}
+        <div className={cn("absolute bottom-0 left-0 right-0 h-1/3 bg-gradient-to-t to-transparent", topFade)} />
       </div>
 
       {/* Content */}
