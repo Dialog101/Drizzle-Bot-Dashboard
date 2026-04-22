@@ -9,7 +9,7 @@ import {
   Settings2, Bell, Search, LogOut, ChevronDown, Moon, Sun, TrendingUp,
   TrendingDown, MoreHorizontal, X, Menu, ChevronRight, Building2, AlertCircle,
   Download, Clock, PhoneMissed, Globe, Save, Play, RefreshCw, CheckCircle2,
-  Mail, Link2, ChevronLeft, ArrowDownLeft, ArrowUpRight, Trash2, Pause,
+  Mail, Link2, ChevronLeft, Trash2, Pause,
   PhoneCall, Send, RotateCcw,
 } from 'lucide-react'
 
@@ -32,6 +32,7 @@ interface Client { id: string; name: string }
 interface Appointment {
   id: string; email: string; contact_phone: string; appointment_type: string
   date: string; status: 'confirmed' | 'pending' | 'cancelled'; client_id: string
+  notes?: string
 }
 interface Call {
   id: string; date: string; caller_number: string; summary: string
@@ -732,6 +733,143 @@ function OverviewPage({ user, activeClientId }: PageProps) {
   )
 }
 
+// ─── Appointment Drawer ───────────────────────────────────────────────────────
+
+function AppointmentDrawer({ appt, onClose, onSaved, onDelete }: {
+  appt: Appointment | null
+  onClose: () => void
+  onSaved: (updated: Appointment) => void
+  onDelete: (id: string, label: string) => void
+}) {
+  const [status, setStatus] = useState<Appointment['status']>('pending')
+  const [date, setDate] = useState('')
+  const [time, setTime] = useState('')
+  const [notes, setNotes] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    if (!appt) return
+    setStatus(appt.status)
+    const d = new Date(appt.date)
+    setDate(d.toISOString().slice(0, 10))
+    setTime(d.toTimeString().slice(0, 5))
+    setNotes(appt.notes ?? '')
+  }, [appt])
+
+  async function save() {
+    if (!appt) return
+    setSaving(true)
+    const newDate = new Date(`${date}T${time}`).toISOString()
+    const update: Partial<Appointment> = { status, date: newDate, notes }
+    const { error } = await sb.from('appointments').update(update).eq('id', appt.id)
+    if (error) { showToast('Save failed: ' + error.message, 'error') }
+    else { showToast('Appointment updated', 'success'); onSaved({ ...appt, ...update }); onClose() }
+    setSaving(false)
+  }
+
+  if (!appt) return null
+  const initials = (appt.email?.[0] ?? appt.contact_phone?.replace(/^\+/, '')?.[0] ?? '?').toUpperCase()
+
+  return (
+    <>
+      <div className="fixed inset-0 z-40 bg-black/30 backdrop-blur-sm" onClick={onClose} />
+      <div className="fixed right-0 top-0 z-50 flex h-full w-full max-w-md flex-col border-l border-slate-200 bg-white shadow-2xl dark:border-white/[0.08] dark:bg-[#0e1117]">
+
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 dark:border-white/[0.07]">
+          <div>
+            <h2 className="text-base font-semibold text-slate-900 dark:text-white" style={{ fontFamily: "'Space Grotesk',sans-serif" }}>Appointment Details</h2>
+            <p className="mt-0.5 font-mono text-[11px] text-slate-400">#{appt.id.slice(0, 8)}</p>
+          </div>
+          <button onClick={onClose} className="rounded-xl p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-white/10 dark:hover:text-white">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 space-y-6 overflow-y-auto px-6 py-6">
+
+          {/* Contact card */}
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-white/[0.08] dark:bg-white/[0.03]">
+            <p className="mb-3 text-[10px] font-semibold uppercase tracking-widest text-slate-400">Contact</p>
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-violet-500 to-purple-600 text-sm font-bold text-white">
+                {initials}
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">{appt.email || '—'}</p>
+                <p className="text-xs text-slate-400">{appt.contact_phone || '—'}</p>
+              </div>
+            </div>
+            <div className="mt-3 border-t border-slate-200 pt-3 dark:border-white/[0.07]">
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">Appointment type</p>
+              <p className="mt-1 text-sm font-medium text-slate-700 dark:text-slate-300">{appt.appointment_type}</p>
+            </div>
+          </div>
+
+          {/* Status toggle */}
+          <div className="space-y-2">
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">Status</p>
+            <div className="flex gap-2">
+              {(['confirmed', 'pending', 'cancelled'] as const).map(s => (
+                <button key={s} onClick={() => setStatus(s)}
+                  className={cn('flex-1 rounded-xl border py-2.5 text-xs font-semibold capitalize transition-all',
+                    status === s
+                      ? s === 'confirmed' ? 'border-emerald-400 bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400'
+                        : s === 'pending'   ? 'border-amber-400  bg-amber-50  text-amber-700  dark:bg-amber-500/10  dark:text-amber-400'
+                        :                    'border-red-400    bg-red-50    text-red-700    dark:bg-red-500/10    dark:text-red-400'
+                      : 'border-slate-200 text-slate-400 hover:border-slate-300 dark:border-white/[0.08] dark:hover:border-white/20')}>
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Reschedule */}
+          <div className="space-y-2">
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">Date & Time</p>
+            <div className="flex gap-2">
+              <div className="flex flex-1 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 dark:border-white/[0.08] dark:bg-white/[0.03]">
+                <Calendar className="h-3.5 w-3.5 flex-shrink-0 text-slate-400" />
+                <input type="date" value={date} onChange={e => setDate(e.target.value)}
+                  className="flex-1 bg-transparent text-sm text-slate-700 outline-none dark:text-slate-300" />
+              </div>
+              <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 dark:border-white/[0.08] dark:bg-white/[0.03]">
+                <Clock className="h-3.5 w-3.5 flex-shrink-0 text-slate-400" />
+                <input type="time" value={time} onChange={e => setTime(e.target.value)}
+                  className="bg-transparent text-sm text-slate-700 outline-none dark:text-slate-300" />
+              </div>
+            </div>
+          </div>
+
+          {/* Notes */}
+          <div className="space-y-2">
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">Notes</p>
+            <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={4}
+              placeholder="Add a note about this appointment…"
+              className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700 placeholder-slate-400 outline-none transition-colors focus:border-violet-400 focus:ring-2 focus:ring-violet-400/20 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-slate-300 dark:placeholder-slate-600 dark:focus:border-violet-500" />
+          </div>
+
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center gap-3 border-t border-slate-200 px-6 py-4 dark:border-white/[0.07]">
+          <button onClick={() => { onDelete(appt.id, `${appt.appointment_type} for ${appt.email || appt.contact_phone}`); onClose() }}
+            className="flex items-center gap-1.5 rounded-xl border border-red-200 px-4 py-2.5 text-sm font-medium text-red-500 transition-colors hover:bg-red-50 dark:border-red-500/20 dark:hover:bg-red-500/10">
+            <Trash2 className="h-4 w-4" />Delete
+          </button>
+          <button onClick={save} disabled={saving}
+            className="ml-auto flex items-center gap-2 rounded-xl bg-violet-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-500/20 transition-colors hover:bg-violet-500 disabled:opacity-50">
+            {saving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+            Save changes
+          </button>
+        </div>
+
+      </div>
+    </>
+  )
+}
+
 // ─── Appointments Page ────────────────────────────────────────────────────────
 
 function AppointmentsPage({ user, activeClientId }: PageProps) {
@@ -740,6 +878,7 @@ function AppointmentsPage({ user, activeClientId }: PageProps) {
   const [status, setStatus] = useState('all')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
+  const [selectedAppt, setSelectedAppt] = useState<Appointment | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; label: string } | null>(null)
   const [deleteBusy, setDeleteBusy] = useState(false)
   const [showDeleted, setShowDeleted] = useState(false)
@@ -828,14 +967,15 @@ function AppointmentsPage({ user, activeClientId }: PageProps) {
               <TableHead cols={['Contact', 'Type', 'Phone', 'Date & Time', 'Status', '']} />
               <tbody className="divide-y divide-slate-100 dark:divide-white/[0.04]">
                 {rows.map(r => (
-                  <tr key={r.id} className="group transition-colors hover:bg-slate-50 dark:hover:bg-white/[0.03]">
+                  <tr key={r.id} onClick={() => setSelectedAppt(r)}
+                    className="group cursor-pointer transition-colors hover:bg-slate-50 dark:hover:bg-white/[0.03]">
                     <td className="px-6 py-4 text-sm font-medium text-slate-900 dark:text-white">{r.email}</td>
                     <td className="px-6 py-4 text-sm text-slate-500 dark:text-slate-400">{r.appointment_type}</td>
                     <td className="px-6 py-4 text-sm text-slate-500 dark:text-slate-400">{r.contact_phone}</td>
                     <td className="px-6 py-4 text-sm text-slate-500 dark:text-slate-400">{formatDate(r.date)}</td>
                     <td className="px-6 py-4"><StatusBadge status={r.status} /></td>
                     <td className="px-6 py-4">
-                      <button onClick={() => setDeleteTarget({ id: r.id, label: `${r.appointment_type} for ${r.email || r.contact_phone}` })}
+                      <button onClick={e => { e.stopPropagation(); setDeleteTarget({ id: r.id, label: `${r.appointment_type} for ${r.email || r.contact_phone}` }) }}
                         className="rounded-lg p-1.5 text-slate-300 opacity-0 transition-all hover:bg-red-50 hover:text-red-500 group-hover:opacity-100 dark:text-slate-600 dark:hover:bg-red-500/10 dark:hover:text-red-400">
                         <Trash2 className="h-4 w-4" />
                       </button>
@@ -887,6 +1027,12 @@ function AppointmentsPage({ user, activeClientId }: PageProps) {
       </GlassCard>
 
       <DeleteModal target={deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={confirmDelete} busy={deleteBusy} />
+      <AppointmentDrawer
+        appt={selectedAppt}
+        onClose={() => setSelectedAppt(null)}
+        onSaved={updated => setRows(rs => rs.map(r => r.id === updated.id ? updated : r))}
+        onDelete={(id, label) => { setSelectedAppt(null); setDeleteTarget({ id, label }) }}
+      />
     </div>
   )
 }
