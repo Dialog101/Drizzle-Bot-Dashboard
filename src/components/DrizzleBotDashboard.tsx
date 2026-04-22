@@ -280,29 +280,32 @@ function GlassCard({ children, className }: { children: React.ReactNode; classNa
   )
 }
 
-// Sparkline data sets — one per card, intentionally varied shapes
-const SPARK: Record<string, { value: number }[]> = {
-  appointments: [
-    {value:3},{value:7},{value:4},{value:9},{value:5},{value:11},{value:6},
-    {value:13},{value:8},{value:5},{value:10},{value:7},{value:12},{value:9},{value:14},
-  ],
-  calls: [
-    {value:10},{value:22},{value:14},{value:30},{value:18},{value:26},{value:12},
-    {value:34},{value:20},{value:15},{value:28},{value:16},{value:24},{value:19},{value:31},
-  ],
-  contacts: [
-    {value:50},{value:80},{value:60},{value:110},{value:75},{value:130},{value:90},
-    {value:150},{value:100},{value:70},{value:120},{value:85},{value:140},{value:105},{value:160},
-  ],
-  messages: [
-    {value:20},{value:45},{value:28},{value:60},{value:35},{value:55},{value:25},
-    {value:70},{value:40},{value:30},{value:52},{value:38},{value:65},{value:42},{value:75},
-  ],
+function buildDailyBuckets(dates: string[], days: number): { value: number }[] {
+  const now = new Date()
+  return Array.from({ length: days }, (_, i) => {
+    const d = new Date(now)
+    d.setDate(d.getDate() - (days - 1 - i))
+    const ds = d.toISOString().slice(0, 10)
+    return { value: dates.filter(dt => dt.slice(0, 10) === ds).length }
+  })
 }
 
-function StatCard({ label, value, icon, color, gradientId, sparkKey, trend, loading }: {
+function calcTrend(dates: string[]): { value: number; up: boolean } {
+  const now = new Date()
+  let last7 = 0, prev7 = 0
+  for (const dt of dates) {
+    const daysAgo = Math.floor((now.getTime() - new Date(dt.slice(0, 10)).getTime()) / 86400000)
+    if (daysAgo < 7) last7++
+    else if (daysAgo < 14) prev7++
+  }
+  if (prev7 === 0) return { value: last7 > 0 ? 100 : 0, up: last7 >= prev7 }
+  const pct = Math.round(((last7 - prev7) / prev7) * 100)
+  return { value: Math.abs(pct), up: pct >= 0 }
+}
+
+function StatCard({ label, value, icon, color, gradientId, sparkData, trend, loading }: {
   label: string; value: number | string; icon: React.ReactNode
-  color: string; gradientId: string; sparkKey: keyof typeof SPARK
+  color: string; gradientId: string; sparkData: { value: number }[]
   trend?: { value: number; up: boolean }; loading?: boolean
 }) {
   return (
@@ -331,7 +334,7 @@ function StatCard({ label, value, icon, color, gradientId, sparkKey, trend, load
         {/* Sparkline */}
         <div className="h-16 w-36 shrink-0">
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={SPARK[sparkKey]} margin={{ top: 4, right: 4, left: 4, bottom: 4 }}>
+            <AreaChart data={sparkData} margin={{ top: 4, right: 4, left: 4, bottom: 4 }}>
               <defs>
                 <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor={color} stopOpacity={0.3} />
@@ -590,6 +593,16 @@ function OverviewPage({ user, activeClientId }: PageProps) {
   const [statsLoading, setStatsLoading] = useState(true)
   const [appointments, setAppointments] = useState<Appointment[]>([])
   const [apptLoading, setApptLoading] = useState(true)
+  const [sparkData, setSparkData] = useState<Record<string, { value: number }[]>>({
+    appointments: Array(15).fill({ value: 0 }),
+    calls: Array(15).fill({ value: 0 }),
+    contacts: Array(15).fill({ value: 0 }),
+    messages: Array(15).fill({ value: 0 }),
+  })
+  const [trends, setTrends] = useState<Record<string, { value: number; up: boolean }>>({
+    appointments: { value: 0, up: true }, calls: { value: 0, up: true },
+    contacts: { value: 0, up: true }, messages: { value: 0, up: true },
+  })
 
   const addFilter = useCallback((q: any) => {
     if (user.role === 'admin' && activeClientId) return q.eq('client_id', activeClientId)
@@ -599,15 +612,37 @@ function OverviewPage({ user, activeClientId }: PageProps) {
 
   const loadData = useCallback(() => {
     const today = new Date().toISOString().slice(0, 10)
+    const since28 = new Date(); since28.setDate(since28.getDate() - 28)
+    const since28Str = since28.toISOString()
     setStatsLoading(true)
     Promise.all([
       addFilter(sb.from('appointments').select('id', { count: 'exact', head: true }).gte('date', `${today}T00:00:00`).lte('date', `${today}T23:59:59`).is('deleted_at', null)),
       addFilter(sb.from('calls').select('id', { count: 'exact', head: true })),
       addFilter(sb.from('contacts').select('id', { count: 'exact', head: true })),
       addFilter(sb.from('messages').select('id', { count: 'exact', head: true })),
-    ]).then(([a, c, co, m]) => {
+      addFilter(sb.from('appointments').select('date').gte('date', since28Str).is('deleted_at', null)),
+      addFilter(sb.from('calls').select('date').gte('date', since28Str)),
+      addFilter(sb.from('contacts').select('created_at').gte('created_at', since28Str)),
+      addFilter(sb.from('messages').select('created_at').gte('created_at', since28Str)),
+    ]).then(([a, c, co, m, aH, cH, coH, mH]) => {
       setStats({ todayAppointments: a.count ?? 0, totalCalls: c.count ?? 0, totalContacts: co.count ?? 0, totalMessages: m.count ?? 0 })
       setStatsLoading(false)
+      const apptDates = ((aH.data  ?? []) as any[]).map(r => r.date as string)
+      const callDates = ((cH.data  ?? []) as any[]).map(r => r.date as string)
+      const contDates = ((coH.data ?? []) as any[]).map(r => r.created_at as string)
+      const msgDates  = ((mH.data  ?? []) as any[]).map(r => r.created_at as string)
+      setSparkData({
+        appointments: buildDailyBuckets(apptDates, 15),
+        calls:        buildDailyBuckets(callDates, 15),
+        contacts:     buildDailyBuckets(contDates, 15),
+        messages:     buildDailyBuckets(msgDates,  15),
+      })
+      setTrends({
+        appointments: calcTrend(apptDates),
+        calls:        calcTrend(callDates),
+        contacts:     calcTrend(contDates),
+        messages:     calcTrend(msgDates),
+      })
     })
     setApptLoading(true)
     addFilter(sb.from('appointments').select('*').is('deleted_at', null).order('date', { ascending: false }).limit(8))
@@ -621,10 +656,10 @@ function OverviewPage({ user, activeClientId }: PageProps) {
   }, [loadData])
 
   const cards = [
-    { label: "Today's Appointments", value: stats.todayAppointments, color: '#7c3aed', gradientId: 'grad-appt',  sparkKey: 'appointments' as const, icon: <CalendarDays className="h-5 w-5" />, trend: { value: 12, up: true  } },
-    { label: 'Total Calls',          value: stats.totalCalls,        color: '#2563eb', gradientId: 'grad-calls', sparkKey: 'calls'        as const, icon: <Phone         className="h-5 w-5" />, trend: { value: 8,  up: true  } },
-    { label: 'Contacts',             value: stats.totalContacts,     color: '#059669', gradientId: 'grad-cont',  sparkKey: 'contacts'     as const, icon: <Users         className="h-5 w-5" />, trend: { value: 3,  up: true  } },
-    { label: 'Messages',             value: stats.totalMessages,     color: '#d97706', gradientId: 'grad-msg',   sparkKey: 'messages'     as const, icon: <MessageSquare className="h-5 w-5" />, trend: { value: 5,  up: false } },
+    { label: "Today's Appointments", value: stats.todayAppointments, color: '#7c3aed', gradientId: 'grad-appt',  sparkData: sparkData.appointments, icon: <CalendarDays className="h-5 w-5" />, trend: trends.appointments },
+    { label: 'Total Calls',          value: stats.totalCalls,        color: '#2563eb', gradientId: 'grad-calls', sparkData: sparkData.calls,         icon: <Phone         className="h-5 w-5" />, trend: trends.calls        },
+    { label: 'Contacts',             value: stats.totalContacts,     color: '#059669', gradientId: 'grad-cont',  sparkData: sparkData.contacts,      icon: <Users         className="h-5 w-5" />, trend: trends.contacts     },
+    { label: 'Messages',             value: stats.totalMessages,     color: '#d97706', gradientId: 'grad-msg',   sparkData: sparkData.messages,      icon: <MessageSquare className="h-5 w-5" />, trend: trends.messages     },
   ]
 
   return (
