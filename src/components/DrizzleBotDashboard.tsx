@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { createClient } from '@supabase/supabase-js'
+import { SignInPage } from '@/components/ui/sign-in-flow-1'
 import {
   LayoutDashboard, CalendarDays, Calendar, Phone, Users, MessageSquare,
   Settings2, Bell, Search, LogOut, ChevronDown, Moon, Sun, TrendingUp,
@@ -1417,74 +1418,6 @@ function ControlsPage({ user, activeClientId }: PageProps) {
   )
 }
 
-// ─── Login Page ───────────────────────────────────────────────────────────────
-
-function LoginPage({ onLogin, dark, onToggleDark }: { onLogin: (u: AppUser) => void; dark: boolean; onToggleDark: () => void }) {
-  const [email, setEmail]       = useState('')
-  const [password, setPassword] = useState('')
-  const [error, setError]       = useState('')
-  const [loading, setLoading]   = useState(false)
-
-  async function handleSubmit(e: React.SyntheticEvent<HTMLFormElement>) {
-    e.preventDefault(); setError(''); setLoading(true)
-    const { data, error: err } = await sb.auth.signInWithPassword({ email, password })
-    if (err || !data.user) { setError(err?.message ?? 'Sign-in failed.'); setLoading(false); return }
-    const meta = data.user.user_metadata as { role?: string; client_id?: string; full_name?: string }
-    onLogin({ id: data.user.id, email: data.user.email ?? '', role: (meta.role as Role) ?? 'client', client_id: meta.client_id ?? null, name: meta.full_name ?? '' })
-    setLoading(false)
-  }
-
-  return (
-    <div className={cn('relative flex min-h-screen items-center justify-center px-4', dark ? 'dark bg-[#060910]' : 'bg-slate-50')}>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600&display=swap');
-        *{font-family:'DM Sans',system-ui,sans-serif}
-        h1,h2,h3,h4{font-family:'Space Grotesk',system-ui,sans-serif}
-      `}</style>
-
-      {/* Theme toggle */}
-      <button
-        onClick={onToggleDark}
-        aria-label="Toggle theme"
-        className="absolute right-5 top-5 z-20 flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white/80 text-slate-500 shadow-sm backdrop-blur-sm transition-colors hover:bg-white hover:text-slate-800 dark:border-white/[0.08] dark:bg-white/[0.05] dark:text-slate-400 dark:hover:bg-white/[0.1] dark:hover:text-white"
-      >
-        {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-      </button>
-
-      <div className="pointer-events-none absolute inset-0">
-        <div className="absolute -top-24 left-1/3 h-80 w-80 rounded-full bg-violet-200/60 blur-[100px] dark:bg-violet-700/20" />
-        <div className="absolute bottom-0 right-1/4 h-64 w-64 rounded-full bg-indigo-200/60 blur-[90px] dark:bg-indigo-700/20" />
-      </div>
-      <div className="relative z-10 w-full max-w-sm">
-        <div className="mb-8 flex flex-col items-center gap-3">
-          <MechawareLogo size={52} />
-          <div className="text-center">
-            <h1 className="text-xl font-bold text-slate-900 dark:text-white" style={{ fontFamily: "'Space Grotesk',sans-serif" }}>DrizzleBot</h1>
-            <p className="text-sm text-slate-500 dark:text-slate-400">Sign in to your client portal</p>
-          </div>
-        </div>
-        <form onSubmit={handleSubmit} className="space-y-4 rounded-2xl border border-slate-200 bg-white p-8 shadow-lg dark:border-white/[0.08] dark:bg-white/[0.04] dark:shadow-none dark:backdrop-blur-sm">
-          <div>
-            <label className="mb-1.5 block text-xs font-medium text-slate-700 dark:text-slate-300">Email</label>
-            <input type="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="you@company.com"
-              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 placeholder-slate-400 outline-none transition-colors focus:border-violet-400 focus:bg-white dark:border-white/[0.08] dark:bg-white/[0.05] dark:text-white dark:placeholder-slate-500 dark:focus:border-violet-500/50 dark:focus:bg-white/[0.08]" />
-          </div>
-          <div>
-            <label className="mb-1.5 block text-xs font-medium text-slate-700 dark:text-slate-300">Password</label>
-            <input type="password" required value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••"
-              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 placeholder-slate-400 outline-none transition-colors focus:border-violet-400 focus:bg-white dark:border-white/[0.08] dark:bg-white/[0.05] dark:text-white dark:placeholder-slate-500 dark:focus:border-violet-500/50 dark:focus:bg-white/[0.08]" />
-          </div>
-          {error && <div className="flex items-center gap-2 rounded-xl bg-red-50 px-3 py-2.5 text-xs text-red-600 ring-1 ring-red-200 dark:bg-red-500/10 dark:text-red-400 dark:ring-red-500/20"><AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />{error}</div>}
-          <button type="submit" disabled={loading}
-            className="w-full rounded-xl bg-gradient-to-r from-violet-600 to-purple-600 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-500/20 transition-all hover:from-violet-500 hover:to-purple-500 disabled:opacity-50">
-            {loading ? 'Signing in…' : 'Sign in'}
-          </button>
-        </form>
-      </div>
-    </div>
-  )
-}
-
 // ─── Root Dashboard ───────────────────────────────────────────────────────────
 
 export default function DrizzleBotDashboard() {
@@ -1565,7 +1498,7 @@ export default function DrizzleBotDashboard() {
       </div>
     )
   }
-  if (!user) return <LoginPage onLogin={setUser} dark={dark} onToggleDark={() => setDark(d => !d)} />
+  if (!user) return <SignInPage onLogin={setUser} dark={dark} onToggleDark={() => setDark(d => !d)} />
 
   return (
     // Apply the `dark` class here — Tailwind v4 picks it up via @variant dark
