@@ -47,7 +47,7 @@ interface ShaderProps {
 
 // ─── WebGL Shader ─────────────────────────────────────────────────────────────
 
-const ShaderMaterial = ({ source, uniforms, maxFps = 60 }: { source: string; maxFps?: number; uniforms: Uniforms }) => {
+const ShaderMaterial = ({ source, uniforms }: { source: string; maxFps?: number; uniforms: Uniforms }) => {
   const { size } = useThree();
   const ref = useRef<THREE.Mesh>(null);
 
@@ -270,6 +270,21 @@ function MiniNavbar({ dark, onToggleDark }: { dark: boolean; onToggleDark: () =>
 
 // ─── Sign-In Page ─────────────────────────────────────────────────────────────
 
+function friendlyError(msg: string): string {
+  const m = msg.toLowerCase();
+  if (m.includes("rate limit") || m.includes("too many"))
+    return "Too many attempts — please wait a minute before trying again.";
+  if (m.includes("invalid") || m.includes("expired"))
+    return "That code is invalid or has expired. Request a new one.";
+  if (m.includes("not found") || m.includes("no user"))
+    return "No account found for that email address.";
+  if (m.includes("network") || m.includes("fetch"))
+    return "Network error — check your connection and try again.";
+  return msg;
+}
+
+const COOLDOWN_SECS = 60;
+
 export const SignInPage = ({ className, onLogin, dark, onToggleDark }: SignInPageProps) => {
   const [email, setEmail] = useState("");
   const [step, setStep] = useState<"email" | "code" | "success">("email");
@@ -280,15 +295,30 @@ export const SignInPage = ({ className, onLogin, dark, onToggleDark }: SignInPag
   const [initialCanvas, setInitialCanvas] = useState(true);
   const [reverseCanvas, setReverseCanvas] = useState(false);
   const [resendKey, setResendKey] = useState(0);
+  const [cooldown, setCooldown] = useState(0);
+  const cooldownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const startCooldown = () => {
+    setCooldown(COOLDOWN_SECS);
+    cooldownRef.current = setInterval(() => {
+      setCooldown(s => {
+        if (s <= 1) { clearInterval(cooldownRef.current!); return 0; }
+        return s - 1;
+      });
+    }, 1000);
+  };
+
+  useEffect(() => () => { if (cooldownRef.current) clearInterval(cooldownRef.current); }, []);
 
   // ── Email step: send Supabase OTP ──
-  const handleEmailSubmit = async (e: React.FormEvent) => {
+  const handleEmailSubmit = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!email || submitting) return;
+    if (!email || submitting || cooldown > 0) return;
     setError(""); setSubmitting(true);
     const { error: err } = await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: false } });
     setSubmitting(false);
-    if (err) { setError(err.message); return; }
+    if (err) { setError(friendlyError(err.message)); startCooldown(); return; }
+    startCooldown();
     setStep("code");
   };
 
@@ -305,7 +335,7 @@ export const SignInPage = ({ className, onLogin, dark, onToggleDark }: SignInPag
     const { data, error: err } = await sb.auth.verifyOtp({ email, token, type: "email" });
     setSubmitting(false);
     if (err || !data.user) {
-      setError(err?.message ?? "Invalid code.");
+      setError(friendlyError(err?.message ?? "Invalid code."));
       setReverseCanvas(false); setInitialCanvas(true);
       setCode(["", "", "", "", "", ""]);
       setTimeout(() => codeRefs.current[0]?.focus(), 100);
@@ -444,12 +474,15 @@ export const SignInPage = ({ className, onLogin, dark, onToggleDark }: SignInPag
                           onChange={e => { setEmail(e.target.value); setError(""); }}
                           className={cn("w-full rounded-full border py-3 px-4 text-center backdrop-blur-sm outline-none transition-colors", inputCls)}
                         />
-                        <button type="submit" disabled={submitting}
-                          className={cn("absolute right-1.5 top-1.5 flex h-9 w-9 items-center justify-center overflow-hidden rounded-full transition-colors disabled:opacity-50 group", arrowBtn)}>
-                          <span className="relative block h-full w-full overflow-hidden">
-                            <span className="absolute inset-0 flex items-center justify-center transition-transform duration-300 group-hover:translate-x-full">→</span>
-                            <span className="absolute inset-0 flex -translate-x-full items-center justify-center transition-transform duration-300 group-hover:translate-x-0">→</span>
-                          </span>
+                        <button type="submit" disabled={submitting || cooldown > 0}
+                          className={cn("absolute right-1.5 top-1.5 flex h-9 w-9 items-center justify-center overflow-hidden rounded-full transition-colors disabled:opacity-40 group", arrowBtn)}>
+                          {cooldown > 0
+                            ? <span className="text-[10px] font-semibold tabular-nums">{cooldown}s</span>
+                            : <span className="relative block h-full w-full overflow-hidden">
+                                <span className="absolute inset-0 flex items-center justify-center transition-transform duration-300 group-hover:translate-x-full">→</span>
+                                <span className="absolute inset-0 flex -translate-x-full items-center justify-center transition-transform duration-300 group-hover:translate-x-0">→</span>
+                              </span>
+                          }
                         </button>
                       </div>
                       {error && <p className="mt-2 text-sm text-red-400">{error}</p>}
@@ -509,13 +542,21 @@ export const SignInPage = ({ className, onLogin, dark, onToggleDark }: SignInPag
                   </div>
 
                   <div className="flex items-center justify-center gap-2">
-                    <motion.p className={cn("cursor-pointer text-sm transition-colors", resendCls)}
-                      whileHover={{ scale: 1.02 }} transition={{ duration: 0.2 }}
+                    <motion.p
+                      className={cn(
+                        "text-sm transition-colors",
+                        cooldown > 0 ? "cursor-not-allowed opacity-40 " + resendCls : "cursor-pointer " + resendCls
+                      )}
+                      whileHover={cooldown > 0 ? {} : { scale: 1.02 }}
+                      transition={{ duration: 0.2 }}
                       onClick={async () => {
-                        await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: false } });
+                        if (cooldown > 0) return;
+                        const { error: err } = await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: false } });
+                        if (err) { setError(friendlyError(err.message)); return; }
                         setResendKey(k => k + 1);
+                        startCooldown();
                       }}>
-                      Resend code
+                      {cooldown > 0 ? `Resend in ${cooldown}s` : "Resend code"}
                     </motion.p>
                     {resendKey > 0 && (
                       <motion.span
