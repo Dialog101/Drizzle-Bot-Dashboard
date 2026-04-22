@@ -25,7 +25,7 @@ type Page = 'overview' | 'appointments' | 'calendar' | 'calls' | 'contacts' | 'm
 type Role = 'admin' | 'client'
 
 interface AppUser { id: string; email: string; role: Role; client_id: string | null; name: string }
-interface NavEntry { id: Page; label: string; Icon: React.ElementType; adminOnly?: boolean }
+interface NavEntry { id: Page; label: string; Icon: React.ComponentType<{ className?: string }>; adminOnly?: boolean }
 interface Client { id: string; name: string }
 
 interface Appointment {
@@ -257,7 +257,7 @@ function TableSkeleton({ cols = 5, rows = 6 }: { cols?: number; rows?: number })
   )
 }
 
-function EmptyState({ icon: Icon, label, sub }: { icon: React.ElementType; label: string; sub?: string }) {
+function EmptyState({ icon: Icon, label, sub }: { icon: React.ComponentType<{ className?: string }>; label: string; sub?: string }) {
   return (
     <div className="flex flex-col items-center justify-center gap-3 py-20">
       <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 dark:border-white/[0.08] dark:bg-white/[0.03]">
