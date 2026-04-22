@@ -202,17 +202,6 @@ function OutcomeBadge({ outcome }: { outcome: string }) {
   )
 }
 
-function DirectionBadge({ direction }: { direction: string }) {
-  const isIn = direction === 'inbound'
-  return (
-    <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ring-1',
-      isIn ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 ring-blue-500/20'
-           : 'bg-violet-500/10 text-violet-600 dark:text-violet-400 ring-violet-500/20')}>
-      {isIn ? <ArrowDownLeft className="h-3 w-3" /> : <ArrowUpRight className="h-3 w-3" />}
-      {isIn ? 'Inbound' : 'Outbound'}
-    </span>
-  )
-}
 
 function ChannelBadge({ channel }: { channel: string }) {
   const map: Record<string, string> = {
@@ -1263,8 +1252,9 @@ function ContactsPage({ user, activeClientId }: PageProps) {
 function MessagesPage({ user, activeClientId }: PageProps) {
   const [rows, setRows] = useState<Message[]>([])
   const [loading, setLoading] = useState(true)
-  const [dir, setDir] = useState('all')
   const [chan, setChan] = useState('all')
+  const [selectedThread, setSelectedThread] = useState<string | null>(null)
+  const bottomRef = useRef<HTMLDivElement>(null)
 
   const addFilter = useCallback((q: any) => {
     if (user.role === 'admin' && activeClientId) return q.eq('client_id', activeClientId)
@@ -1274,50 +1264,172 @@ function MessagesPage({ user, activeClientId }: PageProps) {
 
   useEffect(() => {
     setLoading(true)
-    let q = addFilter(sb.from('messages').select('*').order('created_at', { ascending: false }).limit(100))
-    if (dir  !== 'all') q = q.eq('direction', dir)
+    let q = addFilter(sb.from('messages').select('*').order('created_at', { ascending: false }).limit(200))
     if (chan !== 'all') q = q.eq('channel', chan)
-    q.then(({ data }: any) => { setRows((data as Message[]) ?? []); setLoading(false) })
-  }, [addFilter, dir, chan])
+    q.then(({ data }: any) => {
+      const msgs = (data as Message[]) ?? []
+      setRows(msgs)
+      setLoading(false)
+    })
+  }, [addFilter, chan])
+
+  const threads = useMemo(() => {
+    const map = new Map<string, Message[]>()
+    for (const msg of rows) {
+      const key = msg.sender_phone || msg.sender_name || msg.id
+      if (!map.has(key)) map.set(key, [])
+      map.get(key)!.push(msg)
+    }
+    return Array.from(map.entries())
+      .map(([key, msgs]) => ({
+        key,
+        latest: msgs[0],
+        messages: [...msgs].reverse(),
+      }))
+      .sort((a, b) => new Date(b.latest.created_at).getTime() - new Date(a.latest.created_at).getTime())
+  }, [rows])
+
+  // Auto-select first thread
+  useEffect(() => {
+    if (threads.length > 0 && !selectedThread) setSelectedThread(threads[0].key)
+  }, [threads, selectedThread])
+
+  // Scroll to bottom when thread changes
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [selectedThread, threads])
+
+  const threadMsgs = useMemo(
+    () => threads.find(t => t.key === selectedThread)?.messages ?? [],
+    [threads, selectedThread]
+  )
+
+  function avatarInitial(key: string) {
+    const ch = key.replace(/^\+\d/, c => c.slice(1)).trim()[0]
+    return (ch ?? '?').toUpperCase()
+  }
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Messages" subtitle="All AI-managed communications" />
-      <GlassCard>
-        <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 px-6 py-4 dark:border-white/[0.07]">
-          <ToolbarSelect value={dir} onChange={setDir}>
-            <option value="all">All directions</option>
-            <option value="inbound">Inbound</option>
-            <option value="outbound">Outbound</option>
-          </ToolbarSelect>
-          <ToolbarSelect value={chan} onChange={setChan}>
-            <option value="all">All channels</option>
-            <option value="sms">SMS</option>
-            <option value="email">Email</option>
-            <option value="voice">Voice</option>
-          </ToolbarSelect>
-          <ExportButton onClick={() => exportCSV('messages.csv', ['Date','Channel','Direction','Sender','Body'], rows.map(r => [r.created_at, r.channel, r.direction, r.sender_phone ?? r.sender_name ?? '', r.body]))} />
-        </div>
-        {loading ? <TableSkeleton cols={5} /> :
-         rows.length === 0 ? <EmptyState icon={MessageSquare} label="No messages found" /> : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <TableHead cols={['From', 'Channel', 'Direction', 'Message', 'Date', '']} />
-              <tbody className="divide-y divide-slate-100 dark:divide-white/[0.04]">
-                {rows.map(r => (
-                  <tr key={r.id} className="group transition-colors hover:bg-slate-50 dark:hover:bg-white/[0.03]">
-                    <td className="px-6 py-4 text-sm font-medium text-slate-900 dark:text-white">{r.sender_phone ?? r.sender_name ?? '—'}</td>
-                    <td className="px-6 py-4"><ChannelBadge channel={r.channel} /></td>
-                    <td className="px-6 py-4"><DirectionBadge direction={r.direction} /></td>
-                    <td className="max-w-xs px-6 py-4"><p className="truncate text-sm text-slate-500 dark:text-slate-400">{r.body}</p></td>
-                    <td className="px-6 py-4 text-sm text-slate-500 dark:text-slate-400 whitespace-nowrap">{formatDate(r.created_at)}</td>
-                    <td className="px-6 py-4"><button className="rounded-lg p-1.5 text-slate-300 opacity-0 transition-all hover:bg-slate-100 hover:text-slate-600 group-hover:opacity-100 dark:text-slate-600 dark:hover:bg-white/10 dark:hover:text-white"><MoreHorizontal className="h-4 w-4" /></button></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      <PageHeader title="Messages" subtitle="AI-managed conversations"
+        action={
+          <div className="flex items-center gap-2">
+            <ToolbarSelect value={chan} onChange={setChan}>
+              <option value="all">All channels</option>
+              <option value="sms">SMS</option>
+              <option value="email">Email</option>
+              <option value="voice">Voice</option>
+            </ToolbarSelect>
+            <ExportButton onClick={() => exportCSV('messages.csv',
+              ['Date', 'Channel', 'Direction', 'Sender', 'Body'],
+              rows.map(r => [r.created_at, r.channel, r.direction, r.sender_phone ?? r.sender_name ?? '', r.body])
+            )} />
           </div>
-        )}
+        }
+      />
+
+      <GlassCard className="overflow-hidden">
+        <div className="flex h-[640px]">
+
+          {/* ── Conversation list ── */}
+          <div className="flex w-72 flex-shrink-0 flex-col border-r border-slate-200 dark:border-white/[0.07]">
+            <div className="border-b border-slate-200 px-4 py-3 dark:border-white/[0.07]">
+              <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
+                {loading ? '…' : `${threads.length} conversation${threads.length !== 1 ? 's' : ''}`}
+              </p>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              {loading ? (
+                <div className="space-y-px p-2">
+                  {Array.from({ length: 6 }).map((_, i) => (
+                    <div key={i} className="h-[68px] animate-pulse rounded-xl bg-slate-100 dark:bg-white/[0.04]" />
+                  ))}
+                </div>
+              ) : threads.length === 0 ? (
+                <EmptyState icon={MessageSquare} label="No messages yet" />
+              ) : (
+                threads.map(t => {
+                  const isActive = t.key === selectedThread
+                  const isOut = t.latest.direction === 'outbound'
+                  return (
+                    <button key={t.key} onClick={() => setSelectedThread(t.key)}
+                      className={cn('w-full border-b border-slate-100 px-4 py-3 text-left transition-colors dark:border-white/[0.04]',
+                        isActive ? 'bg-violet-50 dark:bg-violet-500/[0.1]' : 'hover:bg-slate-50 dark:hover:bg-white/[0.03]')}>
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-violet-500 to-purple-600 text-xs font-bold text-white">
+                          {avatarInitial(t.key)}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-baseline justify-between gap-1">
+                            <p className={cn('truncate text-xs font-semibold',
+                              isActive ? 'text-violet-700 dark:text-violet-300' : 'text-slate-800 dark:text-slate-200')}>
+                              {t.key}
+                            </p>
+                            <span className="flex-shrink-0 text-[10px] text-slate-400">
+                              {new Date(t.latest.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                            </span>
+                          </div>
+                          <p className="mt-0.5 truncate text-[11px] text-slate-400">
+                            {isOut ? '↗ ' : ''}{t.latest.body}
+                          </p>
+                          <div className="mt-1">
+                            <ChannelBadge channel={t.latest.channel} />
+                          </div>
+                        </div>
+                      </div>
+                    </button>
+                  )
+                })
+              )}
+            </div>
+          </div>
+
+          {/* ── Thread view ── */}
+          <div className="flex flex-1 flex-col min-w-0">
+            {!selectedThread ? (
+              <div className="flex flex-1 flex-col items-center justify-center gap-2">
+                <MessageSquare className="h-10 w-10 text-slate-300 dark:text-slate-600" />
+                <p className="text-sm text-slate-400">Select a conversation</p>
+              </div>
+            ) : (
+              <>
+                {/* Thread header */}
+                <div className="flex items-center gap-3 border-b border-slate-200 px-5 py-3.5 dark:border-white/[0.07]">
+                  <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-violet-500 to-purple-600 text-xs font-bold text-white">
+                    {avatarInitial(selectedThread)}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-slate-900 dark:text-white">{selectedThread}</p>
+                    <p className="text-xs text-slate-400">{threadMsgs.length} message{threadMsgs.length !== 1 ? 's' : ''}</p>
+                  </div>
+                  <ChannelBadge channel={threadMsgs[0]?.channel ?? ''} />
+                </div>
+
+                {/* Bubbles */}
+                <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
+                  {threadMsgs.map(msg => {
+                    const isOut = msg.direction === 'outbound'
+                    return (
+                      <div key={msg.id} className={cn('flex', isOut ? 'justify-end' : 'justify-start')}>
+                        <div className={cn('max-w-[72%] rounded-2xl px-4 py-2.5 shadow-sm',
+                          isOut
+                            ? 'rounded-br-sm bg-gradient-to-br from-violet-600 to-purple-600 text-white'
+                            : 'rounded-bl-sm bg-slate-100 text-slate-800 dark:bg-white/[0.08] dark:text-slate-200')}>
+                          <p className="text-sm leading-relaxed">{msg.body}</p>
+                          <p className={cn('mt-1 text-[10px]', isOut ? 'text-violet-200' : 'text-slate-400')}>
+                            {new Date(msg.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                          </p>
+                        </div>
+                      </div>
+                    )
+                  })}
+                  <div ref={bottomRef} />
+                </div>
+              </>
+            )}
+          </div>
+
+        </div>
       </GlassCard>
     </div>
   )
