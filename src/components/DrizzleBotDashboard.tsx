@@ -482,7 +482,7 @@ function GlobalSearch({ clientId: _clientId }: { clientId: string | null; isAdmi
 
 function Sidebar({ user, clients, activePage, activeClientId, onNavigate, onClientChange, onSignOut, onToggleDark, dark, collapsed, onToggleCollapse }: {
   user: AppUser; clients: Client[]; activePage: Page; activeClientId: string | null
-  onNavigate: (p: Page) => void; onClientChange: (id: string) => void; onSignOut: () => void
+  onNavigate: (p: Page) => void; onClientChange: (id: string | null) => void; onSignOut: () => void
   onToggleDark: () => void; dark: boolean; collapsed: boolean; onToggleCollapse: () => void
 }) {
   const [clientDropOpen, setClientDropOpen] = useState(false)
@@ -514,17 +514,29 @@ function Sidebar({ user, clients, activePage, activeClientId, onNavigate, onClie
           <button onClick={() => setClientDropOpen(v => !v)}
             className="flex w-full items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-left transition-colors hover:bg-slate-100 dark:border-white/[0.08] dark:bg-white/[0.04] dark:hover:bg-white/[0.07]">
             <Building2 className="h-4 w-4 flex-shrink-0 text-slate-400" />
-            <span className="flex-1 truncate text-sm text-slate-700 dark:text-slate-300">{activeClient?.name ?? 'Select client'}</span>
+            <span className="flex-1 truncate text-sm text-slate-700 dark:text-slate-300">
+              {activeClientId === null ? 'All Clients' : (activeClient?.name ?? 'Select client')}
+            </span>
             <ChevronDown className={cn('h-4 w-4 flex-shrink-0 text-slate-400 transition-transform duration-200', clientDropOpen && 'rotate-180')} />
           </button>
           {clientDropOpen && (
             <div className="mt-1 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg dark:border-white/[0.08] dark:bg-slate-900 dark:shadow-black/40">
+              {/* All Clients option */}
+              <button onClick={() => { onClientChange(null); setClientDropOpen(false) }}
+                className={cn('flex w-full items-center gap-2.5 border-b border-slate-100 px-3 py-2.5 text-sm transition-colors hover:bg-slate-50 dark:border-white/[0.06] dark:hover:bg-white/[0.05]',
+                  activeClientId === null ? 'text-violet-600 dark:text-violet-400' : 'text-slate-500 dark:text-slate-400')}>
+                <Globe className="h-3.5 w-3.5 flex-shrink-0" />
+                <span className="font-medium">All Clients</span>
+                {activeClientId === null && <div className="ml-auto h-1.5 w-1.5 rounded-full bg-violet-500" />}
+              </button>
               {clients.length === 0 ? <p className="px-3 py-3 text-xs text-slate-400">No clients found</p> :
                 clients.map(c => (
                   <button key={c.id} onClick={() => { onClientChange(c.id); setClientDropOpen(false) }}
                     className={cn('flex w-full items-center gap-2.5 px-3 py-2.5 text-sm transition-colors hover:bg-slate-50 dark:hover:bg-white/[0.05]',
                       c.id === activeClientId ? 'text-violet-600 dark:text-violet-400' : 'text-slate-700 dark:text-slate-300')}>
-                    {c.id === activeClientId && <div className="h-1.5 w-1.5 rounded-full bg-violet-500" />}{c.name}
+                    <Building2 className="h-3.5 w-3.5 flex-shrink-0 opacity-40" />
+                    <span className="flex-1 truncate">{c.name}</span>
+                    {c.id === activeClientId && <div className="h-1.5 w-1.5 rounded-full bg-violet-500" />}
                   </button>
                 ))}
             </div>
@@ -1602,7 +1614,7 @@ export default function DrizzleBotDashboard() {
   useEffect(() => {
     if (!user || user.role !== 'admin') return
     sb.from('clients').select('id,name').then(({ data }) => {
-      if (data) { setClients(data as Client[]); if (!activeClientId && data.length > 0) setActiveClientId(data[0].id) }
+      if (data) setClients(data as Client[])
     })
   }, [user])
 
