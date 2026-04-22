@@ -329,6 +329,7 @@ export const SignInPage = ({ className, onLogin, dark, onToggleDark }: SignInPag
   const codeRefs = useRef<(HTMLInputElement | null)[]>([]);
   const [initialCanvas, setInitialCanvas] = useState(true);
   const [reverseCanvas, setReverseCanvas] = useState(false);
+  const [resendKey, setResendKey] = useState(0);
 
   // ── Email step: send Supabase OTP ──
   const handleEmailSubmit = async (e: React.FormEvent) => {
@@ -345,6 +346,36 @@ export const SignInPage = ({ className, onLogin, dark, onToggleDark }: SignInPag
     if (step === "code") setTimeout(() => codeRefs.current[0]?.focus(), 500);
   }, [step]);
 
+  // ── Shared verify logic ──
+  const triggerVerify = async (digits: string[]) => {
+    setReverseCanvas(true);
+    setTimeout(() => setInitialCanvas(false), 50);
+    const token = digits.join("");
+    setError(""); setSubmitting(true);
+    const { data, error: err } = await sb.auth.verifyOtp({ email, token, type: "email" });
+    setSubmitting(false);
+    if (err || !data.user) {
+      setError(err?.message ?? "Invalid code.");
+      setReverseCanvas(false); setInitialCanvas(true);
+      setCode(["", "", "", "", "", ""]);
+      setTimeout(() => codeRefs.current[0]?.focus(), 100);
+      return;
+    }
+    const meta = data.user.user_metadata as { role?: string; client_id?: string; full_name?: string };
+    setTimeout(() => {
+      setStep("success");
+      setTimeout(() => {
+        onLogin({
+          id: data.user!.id,
+          email: data.user!.email ?? "",
+          role: (meta.role as Role) ?? "client",
+          client_id: meta.client_id ?? null,
+          name: meta.full_name ?? "",
+        });
+      }, 1400);
+    }, 2000);
+  };
+
   // ── Code digit input handling ──
   const handleCodeChange = async (index: number, value: string) => {
     if (value.length > 1) return;
@@ -352,38 +383,19 @@ export const SignInPage = ({ className, onLogin, dark, onToggleDark }: SignInPag
     next[index] = value;
     setCode(next);
     if (value && index < 5) codeRefs.current[index + 1]?.focus();
+    if (index === 5 && value && next.every(d => d.length === 1)) triggerVerify(next);
+  };
 
-    if (index === 5 && value && next.every(d => d.length === 1)) {
-      setReverseCanvas(true);
-      setTimeout(() => setInitialCanvas(false), 50);
-
-      const token = next.join("");
-      setError(""); setSubmitting(true);
-      const { data, error: err } = await sb.auth.verifyOtp({ email, token, type: "email" });
-      setSubmitting(false);
-
-      if (err || !data.user) {
-        setError(err?.message ?? "Invalid code.");
-        setReverseCanvas(false); setInitialCanvas(true);
-        setCode(["", "", "", "", "", ""]);
-        setTimeout(() => codeRefs.current[0]?.focus(), 100);
-        return;
-      }
-
-      const meta = data.user.user_metadata as { role?: string; client_id?: string; full_name?: string };
-      setTimeout(() => {
-        setStep("success");
-        setTimeout(() => {
-          onLogin({
-            id: data.user!.id,
-            email: data.user!.email ?? "",
-            role: (meta.role as Role) ?? "client",
-            client_id: meta.client_id ?? null,
-            name: meta.full_name ?? "",
-          });
-        }, 1400);
-      }, 2000);
-    }
+  // ── Paste: fill all 6 digits at once ──
+  const handlePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    e.preventDefault();
+    const digits = e.clipboardData.getData("text").replace(/\D/g, "").slice(0, 6);
+    if (!digits) return;
+    const next = Array.from({ length: 6 }, (_, i) => digits[i] ?? "");
+    setCode(next);
+    const lastIndex = Math.min(digits.length - 1, 5);
+    codeRefs.current[lastIndex]?.focus();
+    if (digits.length === 6) triggerVerify(next);
   };
 
   const handleKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -491,6 +503,7 @@ export const SignInPage = ({ className, onLogin, dark, onToggleDark }: SignInPag
                                 value={digit}
                                 onChange={e => handleCodeChange(i, e.target.value)}
                                 onKeyDown={e => handleKeyDown(i, e)}
+                                onPaste={handlePaste}
                                 className="w-8 appearance-none border-none bg-transparent text-center text-xl text-white outline-none focus:ring-0"
                                 style={{ caretColor: "transparent" }}
                               />
@@ -508,13 +521,29 @@ export const SignInPage = ({ className, onLogin, dark, onToggleDark }: SignInPag
                     {error && <p className="mt-3 text-sm text-red-400">{error}</p>}
                   </div>
 
-                  <motion.p className="cursor-pointer text-sm text-white/50 transition-colors hover:text-white/70"
-                    whileHover={{ scale: 1.02 }} transition={{ duration: 0.2 }}
-                    onClick={async () => {
-                      await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: false } });
-                    }}>
-                    Resend code
-                  </motion.p>
+                  <div className="flex items-center justify-center gap-2">
+                    <motion.p className="cursor-pointer text-sm text-white/50 transition-colors hover:text-white/70"
+                      whileHover={{ scale: 1.02 }} transition={{ duration: 0.2 }}
+                      onClick={async () => {
+                        await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: false } });
+                        setResendKey(k => k + 1);
+                      }}>
+                      Resend code
+                    </motion.p>
+                    {resendKey > 0 && (
+                      <motion.span
+                        key={resendKey}
+                        initial={{ scale: 0, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        transition={{ type: "spring", stiffness: 400, damping: 20 }}
+                        className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500"
+                      >
+                        <svg className="h-3 w-3 text-white" viewBox="0 0 20 20" fill="currentColor">
+                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
+                        </svg>
+                      </motion.span>
+                    )}
+                  </div>
 
                   <div className="flex w-full gap-3">
                     <motion.button onClick={handleBack}
