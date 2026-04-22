@@ -923,6 +923,7 @@ function CalendarPage({ user, activeClientId }: PageProps) {
   const [current, setCurrent] = useState(() => new Date())
   const [appointments, setAppointments] = useState<Appointment[]>([])
   const [loading, setLoading] = useState(true)
+  const [selectedDay, setSelectedDay] = useState<string>(() => new Date().toISOString().slice(0, 10))
 
   const addFilter = useCallback((q: any) => {
     if (user.role === 'admin' && activeClientId) return q.eq('client_id', activeClientId)
@@ -943,6 +944,11 @@ function CalendarPage({ user, activeClientId }: PageProps) {
     appointments.forEach(a => { const d = a.date.slice(0, 10); if (!m[d]) m[d] = []; m[d].push(a) })
     return m
   }, [appointments])
+
+  const agendaAppts = useMemo(() => {
+    const appts = byDate[selectedDay] ?? []
+    return [...appts].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+  }, [byDate, selectedDay])
 
   const grid = useMemo(() => {
     const y = current.getFullYear(), mo = current.getMonth()
@@ -967,6 +973,7 @@ function CalendarPage({ user, activeClientId }: PageProps) {
   return (
     <div className="space-y-6">
       <PageHeader title="Calendar" subtitle="Appointments and scheduled events" />
+      <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[1fr_260px]">
       <GlassCard>
         <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 dark:border-white/[0.07]">
           <div className="flex items-center gap-2">
@@ -1007,8 +1014,11 @@ function CalendarPage({ user, activeClientId }: PageProps) {
                 const cellAppts = byDate[ds] ?? []
                 const isToday = ds === todayStr
                 return (
-                  <div key={i} className={cn('min-h-[110px] border-b border-r border-slate-100 p-2 transition-colors hover:bg-slate-50 dark:border-white/[0.04] dark:hover:bg-white/[0.02]',
-                    !cell.current && 'opacity-30', isToday && 'bg-violet-50 dark:bg-violet-500/[0.07]',
+                  <div key={i} onClick={() => cell.current && setSelectedDay(ds)}
+                    className={cn('min-h-[110px] border-b border-r border-slate-100 p-2 transition-colors hover:bg-slate-50 dark:border-white/[0.04] dark:hover:bg-white/[0.02]',
+                    !cell.current && 'opacity-30 cursor-default', cell.current && 'cursor-pointer',
+                    isToday && 'bg-violet-50 dark:bg-violet-500/[0.07]',
+                    selectedDay === ds && cell.current && 'ring-2 ring-inset ring-violet-500',
                     i % 7 === 6 && 'border-r-0')}>
                     <div className={cn('mb-1.5 flex h-6 w-6 items-center justify-center rounded-full text-xs font-medium',
                       isToday ? 'bg-violet-600 text-white font-bold' : 'text-slate-500 dark:text-slate-400')}>
@@ -1072,6 +1082,56 @@ function CalendarPage({ user, activeClientId }: PageProps) {
           </div>
         )}
       </GlassCard>
+
+      {/* ── Daily Agenda Side Panel ── */}
+      <div className="flex flex-col">
+        <GlassCard className="overflow-hidden">
+          <div className="border-b border-slate-200 px-5 py-4 dark:border-white/[0.07]">
+            <h3 className="text-sm font-semibold text-slate-900 dark:text-white" style={{ fontFamily: "'Space Grotesk',sans-serif" }}>
+              {selectedDay === todayStr
+                ? "Today's agenda"
+                : new Date(selectedDay + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
+            </h3>
+            <p className="mt-0.5 text-xs text-slate-400">
+              {agendaAppts.length} {agendaAppts.length === 1 ? 'event' : 'events'}
+            </p>
+          </div>
+          <div className="max-h-[560px] divide-y divide-slate-100 overflow-y-auto dark:divide-white/[0.05]">
+            {agendaAppts.length === 0 ? (
+              <div className="flex flex-col items-center justify-center px-5 py-12 text-center">
+                <Calendar className="mb-2 h-7 w-7 text-slate-300 dark:text-slate-600" />
+                <p className="text-xs text-slate-400 dark:text-slate-500">No events scheduled</p>
+              </div>
+            ) : (
+              agendaAppts.map(a => (
+                <div key={a.id} className="flex gap-3 px-4 py-3">
+                  <div className="min-w-[52px] pt-0.5 text-right">
+                    <span className="text-[11px] font-semibold tabular-nums text-violet-600 dark:text-violet-400">
+                      {new Date(a.date).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </div>
+                  <div className={cn('w-0.5 self-stretch rounded-full flex-shrink-0',
+                    a.status === 'confirmed' ? 'bg-violet-500' :
+                    a.status === 'pending'   ? 'bg-amber-400' : 'bg-slate-300 dark:bg-slate-600')} />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs font-semibold text-slate-800 dark:text-slate-100">{a.appointment_type}</p>
+                    <p className="mt-0.5 truncate text-[11px] text-slate-400">{a.email}</p>
+                    {a.contact_phone && <p className="truncate text-[11px] text-slate-400">{a.contact_phone}</p>}
+                    <span className={cn('mt-1.5 inline-block rounded-full px-2 py-0.5 text-[10px] font-medium capitalize',
+                      a.status === 'confirmed' ? 'bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300' :
+                      a.status === 'pending'   ? 'bg-amber-100  text-amber-700  dark:bg-amber-500/20  dark:text-amber-300' :
+                                                 'bg-slate-100  text-slate-500  dark:bg-slate-500/20  dark:text-slate-400')}>
+                      {a.status}
+                    </span>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </GlassCard>
+      </div>
+
+      </div>{/* end grid */}
     </div>
   )
 }
