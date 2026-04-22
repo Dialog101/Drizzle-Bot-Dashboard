@@ -1345,6 +1345,209 @@ function CalendarPage({ user, activeClientId }: PageProps) {
   )
 }
 
+// ─── Contact Profile Drawer ───────────────────────────────────────────────────
+
+function ContactProfileDrawer({ contact, onClose, onSaved }: {
+  contact: Contact | null
+  onClose: () => void
+  onSaved: (updated: Contact) => void
+}) {
+  const [tab, setTab] = useState<'appointments' | 'calls' | 'messages'>('appointments')
+  const [appts, setAppts]       = useState<Appointment[]>([])
+  const [callLog, setCallLog]   = useState<Call[]>([])
+  const [msgs, setMsgs]         = useState<Message[]>([])
+  const [histLoading, setHistLoading] = useState(false)
+  const [name, setName]         = useState('')
+  const [status, setStatus]     = useState('')
+  const [saving, setSaving]     = useState(false)
+
+  useEffect(() => {
+    if (!contact) return
+    setName(contact.name ?? '')
+    setStatus(contact.status ?? 'active')
+    setTab('appointments')
+    setHistLoading(true)
+    const phone = contact.phone_number ?? contact.phone ?? ''
+    const email = contact.email ?? ''
+    const apptQ = email && phone
+      ? sb.from('appointments').select('*').or(`email.eq.${email},contact_phone.eq.${phone}`)
+      : email
+        ? sb.from('appointments').select('*').eq('email', email)
+        : sb.from('appointments').select('*').eq('contact_phone', phone)
+    Promise.all([
+      apptQ.order('date', { ascending: false }).limit(20),
+      phone ? sb.from('calls').select('*').eq('caller_number', phone).order('date', { ascending: false }).limit(20) : Promise.resolve({ data: [] }),
+      phone ? sb.from('messages').select('*').eq('sender_phone', phone).order('created_at', { ascending: false }).limit(20) : Promise.resolve({ data: [] }),
+    ]).then(([a, c, m]) => {
+      setAppts((a.data as Appointment[]) ?? [])
+      setCallLog((c.data as Call[]) ?? [])
+      setMsgs((m.data as Message[]) ?? [])
+      setHistLoading(false)
+    })
+  }, [contact])
+
+  async function save() {
+    if (!contact) return
+    setSaving(true)
+    const { error } = await sb.from('contacts').update({ name, status }).eq('id', contact.id)
+    if (error) { showToast('Save failed: ' + error.message, 'error') }
+    else { showToast('Contact updated', 'success'); onSaved({ ...contact, name, status }); onClose() }
+    setSaving(false)
+  }
+
+  if (!contact) return null
+
+  const TABS = [
+    { key: 'appointments' as const, label: 'Appointments', icon: CalendarDays, count: appts.length },
+    { key: 'calls'        as const, label: 'Calls',        icon: Phone,        count: callLog.length },
+    { key: 'messages'     as const, label: 'Messages',     icon: MessageSquare, count: msgs.length },
+  ]
+
+  return (
+    <>
+      <div className="fixed inset-0 z-40 bg-black/30 backdrop-blur-sm" onClick={onClose} />
+      <div className="fixed right-0 top-0 z-50 flex h-full w-full max-w-lg flex-col border-l border-slate-200 bg-white shadow-2xl dark:border-white/[0.08] dark:bg-[#0e1117]">
+
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 dark:border-white/[0.07]">
+          <h2 className="text-base font-semibold text-slate-900 dark:text-white" style={{ fontFamily: "'Space Grotesk',sans-serif" }}>Contact Profile</h2>
+          <button onClick={onClose} className="rounded-xl p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-white/10 dark:hover:text-white">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto">
+
+          {/* Profile section */}
+          <div className="border-b border-slate-200 px-6 py-6 dark:border-white/[0.07]">
+            <div className="mb-5 flex items-center gap-4">
+              <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-500 to-purple-600 text-xl font-bold text-white">
+                {(contact.name?.[0] ?? '?').toUpperCase()}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-xs text-slate-400">{contact.email ?? '—'}</p>
+                <p className="truncate text-xs text-slate-400">{contact.phone_number ?? contact.phone ?? '—'}</p>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">Name</label>
+                <input value={name} onChange={e => setName(e.target.value)}
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700 outline-none transition-colors focus:border-violet-400 focus:ring-2 focus:ring-violet-400/20 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-slate-300 dark:focus:border-violet-500" />
+              </div>
+              <div>
+                <label className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">Status</label>
+                <div className="mt-1 flex gap-2">
+                  {(['active', 'lead', 'inactive'] as const).map(s => (
+                    <button key={s} onClick={() => setStatus(s)}
+                      className={cn('flex-1 rounded-xl border py-2 text-xs font-semibold capitalize transition-all',
+                        status === s
+                          ? s === 'active'   ? 'border-emerald-400 bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400'
+                            : s === 'lead'   ? 'border-violet-400  bg-violet-50  text-violet-700  dark:bg-violet-500/10  dark:text-violet-400'
+                            :                  'border-slate-400   bg-slate-100  text-slate-600   dark:bg-white/[0.08]  dark:text-slate-400'
+                          : 'border-slate-200 text-slate-400 hover:border-slate-300 dark:border-white/[0.08] dark:hover:border-white/20')}>
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <button onClick={save} disabled={saving}
+                className="flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-500/20 transition-colors hover:bg-violet-500 disabled:opacity-50">
+                {saving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                Save changes
+              </button>
+            </div>
+          </div>
+
+          {/* History tabs */}
+          <div className="flex border-b border-slate-200 px-6 dark:border-white/[0.07]">
+            {TABS.map(t => (
+              <button key={t.key} onClick={() => setTab(t.key)}
+                className={cn('mr-5 flex items-center gap-1.5 border-b-2 pb-3 pt-4 text-sm font-medium transition-colors',
+                  tab === t.key
+                    ? 'border-violet-600 text-violet-600 dark:border-violet-400 dark:text-violet-400'
+                    : 'border-transparent text-slate-400 hover:text-slate-700 dark:hover:text-slate-300')}>
+                {t.label}
+                <span className={cn('rounded-full px-1.5 py-0.5 text-[10px] font-bold',
+                  tab === t.key
+                    ? 'bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300'
+                    : 'bg-slate-100 text-slate-400 dark:bg-white/[0.06] dark:text-slate-500')}>
+                  {t.count}
+                </span>
+              </button>
+            ))}
+          </div>
+
+          {histLoading ? (
+            <div className="space-y-3 p-6">
+              {Array.from({ length: 3 }).map((_, i) => <div key={i} className="h-16 animate-pulse rounded-xl bg-slate-100 dark:bg-white/[0.04]" />)}
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-100 dark:divide-white/[0.04]">
+
+              {tab === 'appointments' && (appts.length === 0
+                ? <EmptyState icon={CalendarDays} label="No appointments found" />
+                : appts.map(a => (
+                  <div key={a.id} className="flex items-center gap-3 px-6 py-3.5">
+                    <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-violet-100 dark:bg-violet-500/20">
+                      <CalendarDays className="h-3.5 w-3.5 text-violet-600 dark:text-violet-400" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-slate-800 dark:text-slate-200">{a.appointment_type}</p>
+                      <p className="mt-0.5 text-xs text-slate-400">{formatDate(a.date)}</p>
+                    </div>
+                    <StatusBadge status={a.status} />
+                  </div>
+                ))
+              )}
+
+              {tab === 'calls' && (callLog.length === 0
+                ? <EmptyState icon={Phone} label="No calls found" />
+                : callLog.map(c => (
+                  <div key={c.id} className="flex items-start gap-3 px-6 py-3.5">
+                    <div className={cn('mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg',
+                      c.outcome === 'completed' ? 'bg-emerald-100 dark:bg-emerald-500/20'
+                      : c.outcome === 'missed'  ? 'bg-red-100    dark:bg-red-500/20'
+                      :                           'bg-slate-100  dark:bg-white/[0.06]')}>
+                      <Phone className={cn('h-3.5 w-3.5',
+                        c.outcome === 'completed' ? 'text-emerald-600 dark:text-emerald-400'
+                        : c.outcome === 'missed'  ? 'text-red-500    dark:text-red-400'
+                        :                           'text-slate-400')} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium capitalize text-slate-800 dark:text-slate-200">{c.outcome}</p>
+                      <p className="mt-0.5 text-xs text-slate-400">{formatDate(c.date)} · {formatDuration(c.duration_seconds)}</p>
+                      {c.summary && <p className="mt-1 line-clamp-2 text-xs text-slate-400">{c.summary}</p>}
+                    </div>
+                  </div>
+                ))
+              )}
+
+              {tab === 'messages' && (msgs.length === 0
+                ? <EmptyState icon={MessageSquare} label="No messages found" />
+                : msgs.map(m => (
+                  <div key={m.id} className={cn('flex gap-3 px-6 py-3.5', m.direction === 'outbound' && 'flex-row-reverse')}>
+                    <div className={cn('flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg',
+                      m.direction === 'inbound' ? 'bg-blue-100 dark:bg-blue-500/20' : 'bg-violet-100 dark:bg-violet-500/20')}>
+                      <MessageSquare className={cn('h-3.5 w-3.5', m.direction === 'inbound' ? 'text-blue-500 dark:text-blue-400' : 'text-violet-500 dark:text-violet-400')} />
+                    </div>
+                    <div className={cn('min-w-0 flex-1', m.direction === 'outbound' && 'text-right')}>
+                      <p className="text-[11px] text-slate-400">{formatDate(m.created_at)} · {m.channel.toUpperCase()}</p>
+                      <p className="mt-0.5 text-sm text-slate-700 dark:text-slate-300">{m.body}</p>
+                    </div>
+                  </div>
+                ))
+              )}
+
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  )
+}
+
 // ─── Contacts Page ────────────────────────────────────────────────────────────
 
 function ContactsPage({ user, activeClientId }: PageProps) {
@@ -1352,6 +1555,7 @@ function ContactsPage({ user, activeClientId }: PageProps) {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('all')
+  const [selectedContact, setSelectedContact] = useState<Contact | null>(null)
 
   const addFilter = useCallback((q: any) => {
     if (user.role === 'admin' && activeClientId) return q.eq('client_id', activeClientId)
@@ -1396,10 +1600,11 @@ function ContactsPage({ user, activeClientId }: PageProps) {
               <TableHead cols={['Name', 'Email', 'Phone', 'Status', '']} />
               <tbody className="divide-y divide-slate-100 dark:divide-white/[0.04]">
                 {rows.map(r => (
-                  <tr key={r.id} className="group transition-colors hover:bg-slate-50 dark:hover:bg-white/[0.03]">
+                  <tr key={r.id} onClick={() => setSelectedContact(r)}
+                    className="group cursor-pointer transition-colors hover:bg-slate-50 dark:hover:bg-white/[0.03]">
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-3">
-                        <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-violet-100 text-xs font-bold text-violet-700 dark:bg-violet-500/20 dark:text-violet-300">
+                        <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-violet-500 to-purple-600 text-xs font-bold text-white">
                           {r.name?.charAt(0).toUpperCase() ?? '?'}
                         </div>
                         <p className="text-sm font-medium text-slate-900 dark:text-white">{r.name}</p>
@@ -1408,7 +1613,9 @@ function ContactsPage({ user, activeClientId }: PageProps) {
                     <td className="px-6 py-4 text-sm text-slate-500 dark:text-slate-400">{r.email ?? '—'}</td>
                     <td className="px-6 py-4 text-sm text-slate-500 dark:text-slate-400">{r.phone_number ?? r.phone ?? '—'}</td>
                     <td className="px-6 py-4"><StatusBadge status={r.status ?? 'active'} /></td>
-                    <td className="px-6 py-4"><button className="rounded-lg p-1.5 text-slate-300 opacity-0 transition-all hover:bg-slate-100 hover:text-slate-600 group-hover:opacity-100 dark:text-slate-600 dark:hover:bg-white/10 dark:hover:text-white"><MoreHorizontal className="h-4 w-4" /></button></td>
+                    <td className="px-6 py-4">
+                      <ChevronRight className="h-4 w-4 text-slate-300 opacity-0 transition-all group-hover:opacity-100 dark:text-slate-600" />
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -1416,6 +1623,11 @@ function ContactsPage({ user, activeClientId }: PageProps) {
           </div>
         )}
       </GlassCard>
+      <ContactProfileDrawer
+        contact={selectedContact}
+        onClose={() => setSelectedContact(null)}
+        onSaved={updated => setRows(rs => rs.map(r => r.id === updated.id ? updated : r))}
+      />
     </div>
   )
 }
