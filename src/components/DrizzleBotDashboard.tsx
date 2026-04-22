@@ -1419,7 +1419,7 @@ function ControlsPage({ user, activeClientId }: PageProps) {
 
 // ─── Login Page ───────────────────────────────────────────────────────────────
 
-function LoginPage({ onLogin }: { onLogin: (u: AppUser) => void }) {
+function LoginPage({ onLogin, dark, onToggleDark }: { onLogin: (u: AppUser) => void; dark: boolean; onToggleDark: () => void }) {
   const [email, setEmail]       = useState('')
   const [password, setPassword] = useState('')
   const [error, setError]       = useState('')
@@ -1435,7 +1435,22 @@ function LoginPage({ onLogin }: { onLogin: (u: AppUser) => void }) {
   }
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center bg-slate-50 px-4 dark:bg-[#060910]">
+    <div className={cn('relative flex min-h-screen items-center justify-center px-4', dark ? 'dark bg-[#060910]' : 'bg-slate-50')}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600&display=swap');
+        *{font-family:'DM Sans',system-ui,sans-serif}
+        h1,h2,h3,h4{font-family:'Space Grotesk',system-ui,sans-serif}
+      `}</style>
+
+      {/* Theme toggle */}
+      <button
+        onClick={onToggleDark}
+        aria-label="Toggle theme"
+        className="absolute right-5 top-5 z-20 flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white/80 text-slate-500 shadow-sm backdrop-blur-sm transition-colors hover:bg-white hover:text-slate-800 dark:border-white/[0.08] dark:bg-white/[0.05] dark:text-slate-400 dark:hover:bg-white/[0.1] dark:hover:text-white"
+      >
+        {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+      </button>
+
       <div className="pointer-events-none absolute inset-0">
         <div className="absolute -top-24 left-1/3 h-80 w-80 rounded-full bg-violet-200/60 blur-[100px] dark:bg-violet-700/20" />
         <div className="absolute bottom-0 right-1/4 h-64 w-64 rounded-full bg-indigo-200/60 blur-[90px] dark:bg-indigo-700/20" />
@@ -1476,7 +1491,9 @@ export default function DrizzleBotDashboard() {
   const [user, setUser]                       = useState<AppUser | null>(null)
   const [authLoading, setAuthLoading]         = useState(true)
   const [page, setPage]                       = useState<Page>('overview')
-  const [dark, setDark]                       = useState(true)
+  const [dark, setDark]                       = useState(() =>
+    typeof window === 'undefined' ? true : !window.matchMedia('(prefers-color-scheme: light)').matches
+  )
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [clients, setClients]                 = useState<Client[]>([])
   const [activeClientId, setActiveClientId]   = useState<string | null>(null)
@@ -1548,7 +1565,7 @@ export default function DrizzleBotDashboard() {
       </div>
     )
   }
-  if (!user) return <LoginPage onLogin={setUser} />
+  if (!user) return <LoginPage onLogin={setUser} dark={dark} onToggleDark={() => setDark(d => !d)} />
 
   return (
     // Apply the `dark` class here — Tailwind v4 picks it up via @variant dark
