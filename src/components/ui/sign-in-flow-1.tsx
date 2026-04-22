@@ -401,18 +401,18 @@ export const SignInPage = ({ className, onLogin, dark, onToggleDark }: SignInPag
   const divider   = dark ? "bg-white/10"         : "bg-slate-200";
   const inputCls  = dark
     ? "border-white/10 text-white placeholder-white/30 focus:border-white/30"
-    : "border-slate-200 text-slate-900 placeholder-slate-400 focus:border-violet-400 bg-white/60";
+    : "border-slate-300 text-slate-900 placeholder-slate-400 focus:border-violet-500 focus:ring-2 focus:ring-violet-200 bg-white shadow-sm";
   const arrowBtn  = dark
     ? "bg-white/10 text-white hover:bg-white/20"
-    : "bg-slate-200 text-slate-700 hover:bg-slate-300";
-  const codeBorder = dark ? "border-white/10"   : "border-slate-200";
+    : "bg-slate-800 text-white hover:bg-slate-700";
+  const codeBorder = dark ? "border-white/10" : "border-slate-300 shadow-sm";
   const codeText   = dark ? "text-white"         : "text-slate-900";
   const codeGhost  = dark ? "text-white/20"      : "text-slate-300";
   const codeSep    = dark ? "text-white/20"      : "text-slate-300";
   const resendCls  = dark ? "text-white/50 hover:text-white/70" : "text-slate-400 hover:text-slate-600";
   const backBtn    = dark ? "bg-white text-black hover:bg-white/90" : "bg-slate-900 text-white hover:bg-slate-700";
   const contActive = dark ? "bg-white text-black hover:bg-white/90" : "bg-slate-900 text-white hover:bg-slate-700";
-  const contInactive = dark ? "border-white/10 bg-[#111] text-white/30" : "border-slate-200 bg-slate-100 text-slate-300";
+  const contInactive = dark ? "border-white/10 bg-[#111] text-white/30" : "border-slate-300 bg-slate-100 text-slate-400";
   const legalCls  = dark ? "text-white/40" : "text-slate-400";
   const legalLink = dark ? "text-white/40 hover:text-white/60" : "text-slate-400 hover:text-slate-600";
   const successBtn = dark ? "bg-white text-black hover:bg-white/90" : "bg-slate-900 text-white hover:bg-slate-700";
