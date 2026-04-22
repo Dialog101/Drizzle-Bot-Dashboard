@@ -10,7 +10,7 @@ import {
   TrendingDown, MoreHorizontal, X, Menu, ChevronRight, Building2, AlertCircle,
   Download, Clock, PhoneMissed, Globe, Save, Play, RefreshCw, CheckCircle2,
   Mail, Link2, ChevronLeft, Trash2, Pause,
-  PhoneCall, Send, RotateCcw,
+  PhoneCall, Send, RotateCcw, UserPlus, Shield,
 } from 'lucide-react'
 
 // ─── Supabase ─────────────────────────────────────────────────────────────────
@@ -22,7 +22,7 @@ const sb = createClient(
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Page = 'overview' | 'appointments' | 'calendar' | 'calls' | 'contacts' | 'messages' | 'controls'
+type Page = 'overview' | 'appointments' | 'calendar' | 'calls' | 'contacts' | 'messages' | 'controls' | 'users'
 type Role = 'admin' | 'client'
 
 interface AppUser { id: string; email: string; role: Role; client_id: string | null; name: string }
@@ -46,6 +46,12 @@ interface Message {
   id: string; created_at: string; channel: string; direction: 'inbound' | 'outbound'
   sender_phone: string; sender_name?: string; body: string; client_id: string
 }
+interface ProfileRow {
+  id: string; email: string; name: string | null
+  role: 'admin' | 'client'; client_id: string | null
+  status: string; created_at: string
+  clients?: { name: string } | null
+}
 interface OverviewStats { todayAppointments: number; totalCalls: number; totalContacts: number; totalMessages: number }
 interface Notification { id: string; type: 'call' | 'appointment' | 'message'; text: string; timestamp: string; read: boolean }
 interface ToastItem { id: string; msg: string; type: 'success' | 'error' | 'info' }
@@ -61,7 +67,8 @@ const NAV_ITEMS: NavEntry[] = [
   { id: 'calls',        label: 'Call Logs',    Icon: Phone },
   { id: 'contacts',     label: 'Contacts',     Icon: Users },
   { id: 'messages',     label: 'Messages',     Icon: MessageSquare },
-  { id: 'controls',     label: 'Controls',     Icon: Settings2, adminOnly: true },
+  { id: 'users',        label: 'Users',        Icon: UserPlus,   adminOnly: true },
+  { id: 'controls',     label: 'Controls',     Icon: Settings2,  adminOnly: true },
 ]
 
 const WEBHOOK_KEYS: Record<string, string> = {
@@ -1820,6 +1827,328 @@ function MessagesPage({ user, activeClientId }: PageProps) {
   )
 }
 
+// ─── User Management ─────────────────────────────────────────────────────────
+
+function InviteUserModal({ clients, onClose, onInvited }: {
+  clients: Client[]; onClose: () => void; onInvited: (p: ProfileRow) => void
+}) {
+  const [email, setEmail]     = useState('')
+  const [name, setName]       = useState('')
+  const [role, setRole]       = useState<'admin' | 'client'>('client')
+  const [clientId, setClientId] = useState('')
+  const [busy, setBusy]       = useState(false)
+
+  async function submit() {
+    if (!email.trim()) return
+    setBusy(true)
+    const { error: authErr } = await sb.auth.signInWithOtp({ email: email.trim(), options: { shouldCreateUser: true } })
+    if (authErr) { showToast(authErr.message, 'error'); setBusy(false); return }
+    const row = { email: email.trim(), name: name.trim() || null, role, client_id: clientId || null, status: 'invited' }
+    const { data } = await sb.from('profiles').upsert(row, { onConflict: 'email' }).select('*, clients(name)').single()
+    showToast(`Invite sent to ${email.trim()}`, 'success')
+    if (data) onInvited(data as ProfileRow)
+    setBusy(false)
+    onClose()
+  }
+
+  return (
+    <>
+      <div className="fixed inset-0 z-40 bg-black/30 backdrop-blur-sm" onClick={onClose} />
+      <div className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-white/[0.08] dark:bg-[#0e1117]">
+        <div className="mb-5 flex items-center justify-between">
+          <h2 className="text-base font-semibold text-slate-900 dark:text-white" style={{ fontFamily: "'Space Grotesk',sans-serif" }}>Invite User</h2>
+          <button onClick={onClose} className="rounded-xl p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-white/10 dark:hover:text-white"><X className="h-5 w-5" /></button>
+        </div>
+        <div className="space-y-4">
+          <div>
+            <label className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">Email *</label>
+            <div className="mt-1 flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 dark:border-white/[0.08] dark:bg-white/[0.03]">
+              <Mail className="h-3.5 w-3.5 flex-shrink-0 text-slate-400" />
+              <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="user@example.com"
+                className="flex-1 bg-transparent text-sm text-slate-700 placeholder-slate-400 outline-none dark:text-slate-300 dark:placeholder-slate-600" />
+            </div>
+          </div>
+          <div>
+            <label className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">Name</label>
+            <input value={name} onChange={e => setName(e.target.value)} placeholder="Full name"
+              className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700 placeholder-slate-400 outline-none dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-slate-300" />
+          </div>
+          <div>
+            <label className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">Role</label>
+            <div className="mt-1 flex gap-2">
+              {(['client', 'admin'] as const).map(r => (
+                <button key={r} onClick={() => setRole(r)}
+                  className={cn('flex-1 rounded-xl border py-2.5 text-xs font-semibold capitalize transition-all',
+                    role === r
+                      ? r === 'admin' ? 'border-violet-400 bg-violet-50 text-violet-700 dark:bg-violet-500/10 dark:text-violet-400'
+                                      : 'border-blue-400 bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400'
+                      : 'border-slate-200 text-slate-400 hover:border-slate-300 dark:border-white/[0.08]')}>
+                  {r}
+                </button>
+              ))}
+            </div>
+          </div>
+          {role === 'client' && clients.length > 0 && (
+            <div>
+              <label className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">Assign to client</label>
+              <select value={clientId} onChange={e => setClientId(e.target.value)}
+                className="mt-1 w-full cursor-pointer rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700 outline-none dark:border-white/[0.08] dark:bg-[#0e1117] dark:text-slate-300">
+                <option value="">— None —</option>
+                {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+          )}
+        </div>
+        <div className="mt-6 flex items-center justify-end gap-3">
+          <button onClick={onClose} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm text-slate-500 transition-colors hover:bg-slate-50 dark:border-white/[0.08] dark:hover:bg-white/[0.04]">Cancel</button>
+          <button onClick={submit} disabled={busy || !email.trim()}
+            className="flex items-center gap-2 rounded-xl bg-violet-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-500/20 transition-colors hover:bg-violet-500 disabled:opacity-50">
+            {busy ? <RefreshCw className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
+            Send Invite
+          </button>
+        </div>
+      </div>
+    </>
+  )
+}
+
+function EditUserDrawer({ profile, clients, onClose, onSaved }: {
+  profile: ProfileRow | null; clients: Client[]; onClose: () => void; onSaved: (u: ProfileRow) => void
+}) {
+  const [name, setName]       = useState('')
+  const [role, setRole]       = useState<'admin' | 'client'>('client')
+  const [clientId, setClientId] = useState('')
+  const [status, setStatus]   = useState('active')
+  const [saving, setSaving]   = useState(false)
+
+  useEffect(() => {
+    if (!profile) return
+    setName(profile.name ?? '')
+    setRole(profile.role)
+    setClientId(profile.client_id ?? '')
+    setStatus(profile.status)
+  }, [profile])
+
+  async function save() {
+    if (!profile) return
+    setSaving(true)
+    const update = { name: name.trim() || null, role, client_id: clientId || null, status }
+    const { error } = await sb.from('profiles').update(update).eq('id', profile.id)
+    if (error) { showToast('Save failed: ' + error.message, 'error') }
+    else {
+      const clientName = clients.find(c => c.id === clientId)?.name
+      showToast('User updated', 'success')
+      onSaved({ ...profile, ...update, clients: clientName ? { name: clientName } : null })
+      onClose()
+    }
+    setSaving(false)
+  }
+
+  if (!profile) return null
+  return (
+    <>
+      <div className="fixed inset-0 z-40 bg-black/30 backdrop-blur-sm" onClick={onClose} />
+      <div className="fixed right-0 top-0 z-50 flex h-full w-full max-w-md flex-col border-l border-slate-200 bg-white shadow-2xl dark:border-white/[0.08] dark:bg-[#0e1117]">
+        <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 dark:border-white/[0.07]">
+          <div>
+            <h2 className="text-base font-semibold text-slate-900 dark:text-white" style={{ fontFamily: "'Space Grotesk',sans-serif" }}>Edit User</h2>
+            <p className="mt-0.5 text-xs text-slate-400">{profile.email}</p>
+          </div>
+          <button onClick={onClose} className="rounded-xl p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-white/10 dark:hover:text-white"><X className="h-5 w-5" /></button>
+        </div>
+        <div className="flex-1 space-y-6 overflow-y-auto px-6 py-6">
+          <div>
+            <label className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">Name</label>
+            <input value={name} onChange={e => setName(e.target.value)}
+              className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700 outline-none transition-colors focus:border-violet-400 focus:ring-2 focus:ring-violet-400/20 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-slate-300 dark:focus:border-violet-500" />
+          </div>
+          <div>
+            <label className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">Role</label>
+            <div className="mt-1 flex gap-2">
+              {(['client', 'admin'] as const).map(r => (
+                <button key={r} onClick={() => setRole(r)}
+                  className={cn('flex-1 rounded-xl border py-2.5 text-xs font-semibold capitalize transition-all',
+                    role === r
+                      ? r === 'admin' ? 'border-violet-400 bg-violet-50 text-violet-700 dark:bg-violet-500/10 dark:text-violet-400'
+                                      : 'border-blue-400 bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400'
+                      : 'border-slate-200 text-slate-400 hover:border-slate-300 dark:border-white/[0.08]')}>
+                  {r}
+                </button>
+              ))}
+            </div>
+          </div>
+          {role === 'client' && (
+            <div>
+              <label className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">Client account</label>
+              <select value={clientId} onChange={e => setClientId(e.target.value)}
+                className="mt-1 w-full cursor-pointer rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700 outline-none dark:border-white/[0.08] dark:bg-[#0e1117] dark:text-slate-300">
+                <option value="">— Unassigned —</option>
+                {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+          )}
+          <div>
+            <label className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">Account Status</label>
+            <div className="mt-1 flex gap-2">
+              {(['active', 'inactive'] as const).map(s => (
+                <button key={s} onClick={() => setStatus(s)}
+                  className={cn('flex-1 rounded-xl border py-2.5 text-xs font-semibold capitalize transition-all',
+                    status === s
+                      ? s === 'active' ? 'border-emerald-400 bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400'
+                                       : 'border-red-400 bg-red-50 text-red-600 dark:bg-red-500/10 dark:text-red-400'
+                      : 'border-slate-200 text-slate-400 hover:border-slate-300 dark:border-white/[0.08]')}>
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-500/20 dark:bg-amber-500/[0.07]">
+            <p className="text-xs text-amber-700 dark:text-amber-400">
+              Role and client changes take effect on the user's next login. Setting Inactive does not immediately end their session.
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center justify-end gap-3 border-t border-slate-200 px-6 py-4 dark:border-white/[0.07]">
+          <button onClick={onClose} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm text-slate-500 transition-colors hover:bg-slate-50 dark:border-white/[0.08] dark:hover:bg-white/[0.04]">Cancel</button>
+          <button onClick={save} disabled={saving}
+            className="flex items-center gap-2 rounded-xl bg-violet-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-500/20 transition-colors hover:bg-violet-500 disabled:opacity-50">
+            {saving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+            Save changes
+          </button>
+        </div>
+      </div>
+    </>
+  )
+}
+
+function UserManagementPage({ user: _user, activeClientId: _ac }: PageProps) {
+  const [profiles, setProfiles]           = useState<ProfileRow[]>([])
+  const [loading, setLoading]             = useState(true)
+  const [tableError, setTableError]       = useState(false)
+  const [selectedProfile, setSelectedProfile] = useState<ProfileRow | null>(null)
+  const [showInvite, setShowInvite]       = useState(false)
+  const [clients, setClients]             = useState<Client[]>([])
+
+  useEffect(() => {
+    sb.from('clients').select('id,name').then(({ data }) => { if (data) setClients(data as Client[]) })
+    sb.from('profiles').select('*, clients(name)').order('created_at', { ascending: false })
+      .then(({ data, error }) => {
+        if (error) setTableError(true)
+        else setProfiles((data as ProfileRow[]) ?? [])
+        setLoading(false)
+      })
+  }, [])
+
+  function roleBadge(role: string) {
+    const isAdmin = role === 'admin'
+    return (
+      <span className={cn('inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium',
+        isAdmin ? 'bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300'
+                : 'bg-blue-100   text-blue-700   dark:bg-blue-500/20   dark:text-blue-400')}>
+        {isAdmin ? <Shield className="h-3 w-3" /> : <Users className="h-3 w-3" />}
+        {role}
+      </span>
+    )
+  }
+
+  function statusBadge(s: string) {
+    const map: Record<string, string> = {
+      active:   'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400',
+      inactive: 'bg-red-100     text-red-600     dark:bg-red-500/20     dark:text-red-400',
+      invited:  'bg-amber-100   text-amber-700   dark:bg-amber-500/20   dark:text-amber-400',
+    }
+    return <span className={cn('rounded-full px-2.5 py-0.5 text-xs font-medium capitalize', map[s] ?? map.active)}>{s}</span>
+  }
+
+  if (tableError) return (
+    <div className="space-y-6">
+      <PageHeader title="Users" subtitle="Manage portal access" />
+      <GlassCard>
+        <div className="px-6 py-12 text-center">
+          <AlertCircle className="mx-auto mb-3 h-8 w-8 text-amber-500" />
+          <h3 className="text-sm font-semibold text-slate-900 dark:text-white">Profiles table not found</h3>
+          <p className="mx-auto mt-2 max-w-sm text-xs text-slate-400">Create it in your Supabase SQL editor to enable user management:</p>
+          <pre className="mx-auto mt-4 max-w-xl overflow-x-auto rounded-xl bg-slate-900 p-4 text-left text-xs text-slate-300">{`create table profiles (
+  id uuid references auth.users primary key,
+  email text unique not null,
+  name text,
+  role text not null default 'client',
+  client_id uuid references clients(id),
+  status text not null default 'active',
+  created_at timestamptz default now()
+);
+alter table profiles enable row level security;
+create policy "admins can manage profiles" on profiles
+  for all using (
+    (select raw_user_meta_data->>'role'
+     from auth.users where id = auth.uid()) = 'admin'
+  );`}</pre>
+        </div>
+      </GlassCard>
+    </div>
+  )
+
+  return (
+    <div className="space-y-6">
+      <PageHeader title="Users" subtitle="Manage portal access and permissions"
+        action={
+          <button onClick={() => setShowInvite(true)}
+            className="flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-500/20 transition-colors hover:bg-violet-500">
+            <UserPlus className="h-4 w-4" />Invite User
+          </button>
+        }
+      />
+      <GlassCard>
+        {loading ? <TableSkeleton cols={5} /> :
+         profiles.length === 0
+           ? <EmptyState icon={Users} label="No users yet" sub="Invite your first user to get started" />
+           : (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <TableHead cols={['User', 'Role', 'Client', 'Status', 'Joined', '']} />
+              <tbody className="divide-y divide-slate-100 dark:divide-white/[0.04]">
+                {profiles.map(p => (
+                  <tr key={p.id} onClick={() => setSelectedProfile(p)}
+                    className="group cursor-pointer transition-colors hover:bg-slate-50 dark:hover:bg-white/[0.03]">
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-violet-500 to-purple-600 text-xs font-bold text-white">
+                          {(p.name?.[0] ?? p.email?.[0] ?? '?').toUpperCase()}
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium text-slate-900 dark:text-white">{p.name ?? '—'}</p>
+                          <p className="text-xs text-slate-400">{p.email}</p>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">{roleBadge(p.role)}</td>
+                    <td className="px-6 py-4 text-sm text-slate-500 dark:text-slate-400">{p.clients?.name ?? '—'}</td>
+                    <td className="px-6 py-4">{statusBadge(p.status)}</td>
+                    <td className="px-6 py-4 text-sm text-slate-400 whitespace-nowrap">
+                      {new Date(p.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                    </td>
+                    <td className="px-6 py-4">
+                      <ChevronRight className="h-4 w-4 text-slate-300 opacity-0 transition-all group-hover:opacity-100 dark:text-slate-600" />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </GlassCard>
+
+      {showInvite && (
+        <InviteUserModal clients={clients} onClose={() => setShowInvite(false)}
+          onInvited={p => setProfiles(ps => [p, ...ps])} />
+      )}
+      <EditUserDrawer profile={selectedProfile} clients={clients}
+        onClose={() => setSelectedProfile(null)}
+        onSaved={updated => setProfiles(ps => ps.map(p => p.id === updated.id ? updated : p))} />
+    </div>
+  )
+}
+
 // ─── Controls Page ────────────────────────────────────────────────────────────
 
 interface CalClient { id: string; name: string; calendar_webhook_url: string | null }
@@ -2194,6 +2523,7 @@ export default function DrizzleBotDashboard() {
           {page === 'calls'        && <CallLogsPage     user={user} activeClientId={activeClientId} />}
           {page === 'contacts'     && <ContactsPage     user={user} activeClientId={activeClientId} />}
           {page === 'messages'     && <MessagesPage     user={user} activeClientId={activeClientId} />}
+          {page === 'users'    && user.role === 'admin' && <UserManagementPage user={user} activeClientId={activeClientId} />}
           {page === 'controls' && user.role === 'admin' && <ControlsPage user={user} activeClientId={activeClientId} />}
         </main>
       </div>
