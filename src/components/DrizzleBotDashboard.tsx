@@ -232,14 +232,15 @@ function OutcomeBadge({ outcome }: { outcome: string | null | undefined }) {
 }
 
 
-function ChannelBadge({ channel }: { channel: string }) {
+function ChannelBadge({ channel }: { channel: string | null | undefined }) {
+  const c = channel ?? 'sms'
   const map: Record<string, string> = {
     sms:   'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
     email: 'bg-blue-500/10   text-blue-600    dark:text-blue-400',
     voice: 'bg-purple-500/10 text-purple-600  dark:text-purple-400',
     chat:  'bg-amber-500/10  text-amber-600   dark:text-amber-400',
   }
-  return <span className={cn('rounded-full px-2.5 py-0.5 text-xs font-medium', map[channel.toLowerCase()] ?? 'bg-slate-500/10 text-slate-600 dark:text-slate-400')}>{channel.toUpperCase()}</span>
+  return <span className={cn('rounded-full px-2.5 py-0.5 text-xs font-medium', map[c.toLowerCase()] ?? 'bg-slate-500/10 text-slate-600 dark:text-slate-400')}>{c.toUpperCase()}</span>
 }
 
 function PageHeader({ title, subtitle, action }: { title: string; subtitle: string; action?: React.ReactNode }) {
@@ -476,10 +477,10 @@ function GlobalSearch({ clientId, isAdmin: _isAdmin, onNavigate }: { clientId: s
       const [appts, contacts] = await Promise.all([
         (clientId ? apptQ.eq('client_id', clientId) : apptQ).limit(5),
         (clientId ? contQ.eq('client_id', clientId) : contQ).limit(5),
-      ])
+      ]).catch(() => [{ data: [] }, { data: [] }]) as any[]
       const built = []
-      if (appts.data?.length) built.push({ category: 'Appointments', items: appts.data.map(a => ({ id: a.id, label: a.email, sub: `${a.appointment_type} · ${formatDate(a.date)}` })) })
-      if (contacts.data?.length) built.push({ category: 'Contacts', items: contacts.data.map(c => ({ id: c.id, label: c.name, sub: c.email ?? c.phone_number ?? '' })) })
+      if (appts.data?.length) built.push({ category: 'Appointments', items: appts.data.map((a: any) => ({ id: a.id, label: a.email, sub: `${a.appointment_type} · ${formatDate(a.date)}` })) })
+      if (contacts.data?.length) built.push({ category: 'Contacts', items: contacts.data.map((c: any) => ({ id: c.id, label: c.name, sub: c.email ?? c.phone_number ?? '' })) })
       setResults(built); setBusy(false)
     }, 260)
     return () => clearTimeout(t)
@@ -548,7 +549,7 @@ function Sidebar({ user, clients, activePage, activeClientId, onNavigate, onClie
       )
     ).then(results => {
       setClientPending(Object.fromEntries(results.map(r => [r.id, r.count])))
-    })
+    }).catch(() => {})
   }, [clients, user.role])
 
   return (
@@ -740,10 +741,11 @@ function OverviewPage({ user, activeClientId, onNavigate }: PageProps & { onNavi
         contacts:     calcTrend(contDates),
         messages:     calcTrend(msgDates),
       })
-    })
+    }).catch(() => setStatsLoading(false))
     setApptLoading(true)
     addFilter(sb.from('appointments').select('*').is('deleted_at', null).order('date', { ascending: false }).limit(8))
       .then(({ data }: any) => { setAppointments((data as Appointment[]) ?? []); setApptLoading(false) })
+      .catch(() => setApptLoading(false))
   }, [addFilter])
 
   useEffect(() => {
@@ -979,6 +981,7 @@ function AppointmentsPage({ user, activeClientId }: PageProps) {
     if (dateFrom) q = q.gte('date', `${dateFrom}T00:00:00`)
     if (dateTo)   q = q.lte('date', `${dateTo}T23:59:59`)
     q.then(({ data }: any) => { setRows((data as Appointment[]) ?? []); setLoading(false) })
+     .catch(() => setLoading(false))
   }, [addFilter, status, dateFrom, dateTo])
 
   useEffect(() => { setSelectedAppt(null) }, [activeClientId])
@@ -1161,7 +1164,7 @@ function CallLogsPage({ user, activeClientId }: PageProps) {
       setHasMore(rows.length > limit)
       setCalls(rows.slice(0, limit))
       if (isInitial) setLoading(false); else setLoadingMore(false)
-    })
+    }).catch(() => { if (isInitial) setLoading(false); else setLoadingMore(false) })
   }, [addFilter, outcome, limit])
 
   const toggle = (id: string) => setExpanded(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s })
@@ -1275,6 +1278,7 @@ function CalendarPage({ user, activeClientId }: PageProps) {
     setLoading(true)
     addFilter(sb.from('appointments').select('*').gte('date', start.toISOString()).lte('date', end.toISOString()).is('deleted_at', null))
       .then(({ data }: any) => { setAppointments((data as Appointment[]) ?? []); setLoading(false) })
+      .catch(() => setLoading(false))
   }, [addFilter, current])
 
   const byDate = useMemo(() => {
@@ -1714,7 +1718,7 @@ function ContactsPage({ user, activeClientId }: PageProps) {
         setHasMore(fetched.length > limit)
         setRows(fetched.slice(0, limit))
         if (isInitial) setLoading(false); else setLoadingMore(false)
-      })
+      }).catch(() => { if (isInitial) setLoading(false); else setLoadingMore(false) })
     }
     const t = search ? setTimeout(run, 300) : (run(), undefined)
     return () => clearTimeout(t)
@@ -1817,7 +1821,7 @@ function MessagesPage({ user, activeClientId }: PageProps) {
       const msgs = (data as Message[]) ?? []
       setRows(msgs)
       setLoading(false)
-    })
+    }).catch(() => setLoading(false))
   }, [addFilter, chan])
 
   const threads = useMemo(() => {
@@ -2186,13 +2190,13 @@ function UserManagementPage({ user: _user, activeClientId: _ac }: PageProps) {
   const [clients, setClients]             = useState<Client[]>([])
 
   useEffect(() => {
-    sb.from('clients').select('id,name').then(({ data }) => { if (data) setClients(data as Client[]) })
+    sb.from('clients').select('id,name').then(({ data }) => { if (data) setClients(data as Client[]) }).catch(() => {})
     sb.from('profiles').select('*, clients(name)').order('created_at', { ascending: false })
       .then(({ data, error }) => {
         if (error?.code === '42P01') setTableError(true)
         else setProfiles((data as ProfileRow[]) ?? [])
         setLoading(false)
-      })
+      }).catch(() => setLoading(false))
   }, [])
 
   function roleBadge(role: string) {
@@ -2342,7 +2346,7 @@ function ControlsPage({ user, activeClientId }: PageProps) {
         const rows = (data as CalClient[]) ?? []
         setCalClients(rows)
         setCalUrls(Object.fromEntries(rows.map(r => [r.id, r.calendar_webhook_url ?? ''])))
-      })
+      }).catch(() => {})
   }, [user.role])
 
   function addLog(msg: string, ok: boolean) {
@@ -2616,7 +2620,7 @@ function ControlsPage({ user, activeClientId }: PageProps) {
                 <p className="mt-0.5 text-xs text-slate-400">Create a new client account and configure their DrizzleBot setup</p>
               </div>
             </div>
-            <button onClick={() => { sb.from('clients').select('id,name').then(({ data }) => setOnboardClients((data as Client[]) ?? [])); setShowOnboarding(true) }}
+            <button onClick={() => { sb.from('clients').select('id,name').then(({ data }) => setOnboardClients((data as Client[]) ?? [])).catch(() => {}); setShowOnboarding(true) }}
               className="flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-500/20 transition-colors hover:bg-violet-500">
               <Rocket className="h-4 w-4" />Start onboarding
             </button>
@@ -2757,7 +2761,7 @@ function ReportsPage({ user, activeClientId }: PageProps) {
     ]).then(([a, c, co, m]) => {
       setData({ appointments: (a.data as Appointment[]) ?? [], calls: (c.data as Call[]) ?? [], contacts: (co.data as Contact[]) ?? [], messages: (m.data as Message[]) ?? [] })
       setLoading(false)
-    })
+    }).catch(() => setLoading(false))
   }, [addFilter, dateFrom, dateTo])
 
   useEffect(() => { run() }, [run])
@@ -2898,7 +2902,7 @@ function AuditLogPage({ user: _user }: PageProps) {
       if (error?.code === '42P01') setTableError(true)
       else setRows((data as AuditRow[]) ?? [])
       setLoading(false)
-    })
+    }).catch(() => { setTableError(false); setLoading(false) })
   }, [dateFrom, dateTo])
 
   const actionColor: Record<string, string> = {
@@ -3088,7 +3092,7 @@ export default function DrizzleBotDashboard() {
         setUser({ id: data.session.user.id, email: data.session.user.email ?? '', role: meta?.role ?? 'client', client_id: meta?.client_id ?? null, name: meta?.full_name ?? '' })
       }
       setAuthLoading(false)
-    })
+    }).catch(() => setAuthLoading(false))
     const { data: { subscription } } = sb.auth.onAuthStateChange((_, session) => { if (!session) setUser(null) })
     return () => subscription.unsubscribe()
   }, [])
@@ -3097,7 +3101,7 @@ export default function DrizzleBotDashboard() {
     if (!user || user.role !== 'admin') return
     sb.from('clients').select('id,name,status,last_active').then(({ data }) => {
       if (data) setClients(data as Client[])
-    })
+    }).catch(() => {})
   }, [user])
 
   useEffect(() => {
