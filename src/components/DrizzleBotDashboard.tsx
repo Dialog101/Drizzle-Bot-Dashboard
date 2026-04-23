@@ -784,17 +784,24 @@ function AppointmentDrawer({ appt, onClose, onSaved, onDelete }: {
   useEffect(() => {
     if (!appt) return
     setStatus(appt.status)
-    const d = new Date(appt.date)
-    setDate(d.toISOString().slice(0, 10))
-    setTime(`${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`)
     setNotes(appt.notes ?? '')
+    if (appt.date) {
+      const d = new Date(appt.date)
+      if (!isNaN(d.getTime())) {
+        setDate(d.toISOString().slice(0, 10))
+        setTime(`${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`)
+      }
+    }
   }, [appt])
 
   async function save() {
     if (!appt) return
     setSaving(true)
-    const newDate = new Date(`${date}T${time}`).toISOString()
-    const update: Partial<Appointment> = { status, date: newDate, notes }
+    const update: Partial<Appointment> = { status, notes }
+    if (date && time) {
+      const d = new Date(`${date}T${time}`)
+      if (!isNaN(d.getTime())) update.date = d.toISOString()
+    }
     const { error } = await sb.from('appointments').update(update).eq('id', appt.id)
     if (error) { showToast('Save failed: ' + error.message, 'error') }
     else { showToast('Appointment updated', 'success'); onSaved({ ...appt, ...update }); onClose() }
