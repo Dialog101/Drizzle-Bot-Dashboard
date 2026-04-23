@@ -2147,7 +2147,7 @@ function UserManagementPage({ user: _user, activeClientId: _ac }: PageProps) {
     sb.from('clients').select('id,name').then(({ data }) => { if (data) setClients(data as Client[]) })
     sb.from('profiles').select('*, clients(name)').order('created_at', { ascending: false })
       .then(({ data, error }) => {
-        if (error) setTableError(true)
+        if (error?.code === '42P01') setTableError(true)
         else setProfiles((data as ProfileRow[]) ?? [])
         setLoading(false)
       })
