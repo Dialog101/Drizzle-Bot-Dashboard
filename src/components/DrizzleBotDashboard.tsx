@@ -27,8 +27,8 @@ type Page = 'overview' | 'appointments' | 'calendar' | 'calls' | 'contacts' | 'm
 type Role = 'admin' | 'client'
 
 interface AppUser { id: string; email: string; role: Role; client_id: string | null; name: string }
-interface NavEntry { id: Page; label: string; Icon: React.ComponentType<{ className?: string }>; adminOnly?: boolean }
-interface Client { id: string; name: string }
+interface NavEntry { id: Page; label: string; Icon: React.ComponentType<{ className?: string }>; adminOnly?: boolean; clientOnly?: boolean; dividerBefore?: boolean }
+interface Client { id: string; name: string; status?: string; last_active?: string }
 
 interface Appointment {
   id: string; email: string; contact_phone: string; appointment_type: string
@@ -69,13 +69,13 @@ type PageProps = { user: AppUser; activeClientId: string | null }
 const NAV_ITEMS: NavEntry[] = [
   { id: 'overview',     label: 'Overview',     Icon: LayoutDashboard },
   { id: 'appointments', label: 'Appointments', Icon: CalendarDays },
-  { id: 'calendar',     label: 'Calendar',     Icon: Calendar },
+  { id: 'calendar',     label: 'Calendar',     Icon: Calendar,      clientOnly: true },
   { id: 'calls',        label: 'Call Logs',    Icon: Phone },
   { id: 'contacts',     label: 'Contacts',     Icon: Users },
   { id: 'messages',     label: 'Messages',     Icon: MessageSquare },
   { id: 'reports',      label: 'Reports',      Icon: BarChart2 },
-  { id: 'profile',      label: 'Profile',      Icon: User2 },
-  { id: 'users',        label: 'Users',        Icon: UserPlus,      adminOnly: true },
+  { id: 'profile',      label: 'Profile',      Icon: User2,         clientOnly: true },
+  { id: 'users',        label: 'Users',        Icon: UserPlus,      adminOnly: true, dividerBefore: true },
   { id: 'audit',        label: 'Audit Log',    Icon: ClipboardList, adminOnly: true },
   { id: 'controls',     label: 'Controls',     Icon: Settings2,     adminOnly: true },
 ]
@@ -525,8 +525,26 @@ function Sidebar({ user, clients, activePage, activeClientId, onNavigate, onClie
   mobileOpen?: boolean; onCloseMobile?: () => void
 }) {
   const [clientDropOpen, setClientDropOpen] = useState(false)
+  const [clientPending, setClientPending] = useState<Record<string, number>>({})
   const activeClient = clients.find(c => c.id === activeClientId)
-  const visibleNav = NAV_ITEMS.filter(n => !n.adminOnly || user.role === 'admin')
+  const visibleNav = NAV_ITEMS.filter(n => {
+    if (n.adminOnly && user.role !== 'admin') return false
+    if (n.clientOnly && user.role === 'admin') return false
+    return true
+  })
+
+  useEffect(() => {
+    if (user.role !== 'admin' || clients.length === 0) return
+    Promise.all(
+      clients.map(c =>
+        sb.from('appointments').select('id', { count: 'exact', head: true })
+          .eq('client_id', c.id).eq('status', 'pending').is('deleted_at', null)
+          .then(({ count }) => ({ id: c.id, count: count ?? 0 }))
+      )
+    ).then(results => {
+      setClientPending(Object.fromEntries(results.map(r => [r.id, r.count])))
+    })
+  }, [clients, user.role])
 
   return (
     <>
@@ -573,15 +591,27 @@ function Sidebar({ user, clients, activePage, activeClientId, onNavigate, onClie
                 {activeClientId === null && <div className="ml-auto h-1.5 w-1.5 rounded-full bg-violet-500" />}
               </button>
               {clients.length === 0 ? <p className="px-3 py-3 text-xs text-slate-400">No clients found</p> :
-                clients.map(c => (
-                  <button key={c.id} onClick={() => { onClientChange(c.id); setClientDropOpen(false) }}
-                    className={cn('flex w-full items-center gap-2.5 px-3 py-2.5 text-sm transition-colors hover:bg-slate-50 dark:hover:bg-white/[0.05]',
-                      c.id === activeClientId ? 'text-violet-600 dark:text-violet-400' : 'text-slate-700 dark:text-slate-300')}>
-                    <Building2 className="h-3.5 w-3.5 flex-shrink-0 opacity-40" />
-                    <span className="flex-1 truncate">{c.name}</span>
-                    {c.id === activeClientId && <div className="h-1.5 w-1.5 rounded-full bg-violet-500" />}
-                  </button>
-                ))}
+                clients.map(c => {
+                  const pending = clientPending[c.id] ?? 0
+                  const inactive = c.status === 'inactive'
+                  return (
+                    <button key={c.id} onClick={() => { onClientChange(c.id); setClientDropOpen(false) }}
+                      className={cn('flex w-full items-center gap-2.5 px-3 py-2.5 transition-colors hover:bg-slate-50 dark:hover:bg-white/[0.05]',
+                        c.id === activeClientId ? 'text-violet-600 dark:text-violet-400' : 'text-slate-700 dark:text-slate-300')}>
+                      <div className={cn('mt-0.5 h-2 w-2 flex-shrink-0 rounded-full', inactive ? 'bg-red-400' : 'bg-emerald-400')} />
+                      <div className="min-w-0 flex-1 text-left">
+                        <p className="truncate text-sm font-medium">{c.name}</p>
+                        {c.last_active && <p className="truncate text-[10px] text-slate-400">{formatDate(c.last_active)}</p>}
+                      </div>
+                      {pending > 0 && (
+                        <span className="flex-shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-500/20 dark:text-amber-400">
+                          {pending}
+                        </span>
+                      )}
+                      {c.id === activeClientId && <div className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-violet-500" />}
+                    </button>
+                  )
+                })}
             </div>
           )}
         </div>
@@ -593,18 +623,23 @@ function Sidebar({ user, clients, activePage, activeClientId, onNavigate, onClie
           {visibleNav.map(item => {
             const active = activePage === item.id
             return (
-              <button key={item.id} onClick={() => onNavigate(item.id)} title={collapsed ? item.label : undefined}
-                className={cn('group flex w-full items-center gap-3 rounded-xl text-sm font-medium transition-all duration-150',
-                  collapsed ? 'justify-center px-0 py-3' : 'px-3 py-2.5',
-                  active
-                    ? 'bg-gradient-to-r from-violet-600 to-purple-600 text-white shadow-lg shadow-violet-500/20'
-                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-white/[0.05] dark:hover:text-slate-200')}>
-                <item.Icon className={cn('flex-shrink-0', collapsed ? 'h-5 w-5' : 'h-[18px] w-[18px]')} />
-                {!collapsed && <>
-                  <span>{item.label}</span>
-                  {item.adminOnly && <span className="ml-auto rounded-full bg-violet-500/20 px-1.5 py-0.5 text-[9px] font-semibold tracking-wider text-violet-600 dark:text-violet-400">ADMIN</span>}
-                </>}
-              </button>
+              <div key={item.id}>
+                {item.dividerBefore && !collapsed && (
+                  <div className="my-2 border-t border-slate-200 dark:border-white/[0.06]" />
+                )}
+                <button onClick={() => onNavigate(item.id)} title={collapsed ? item.label : undefined}
+                  className={cn('group flex w-full items-center gap-3 rounded-xl text-sm font-medium transition-all duration-150',
+                    collapsed ? 'justify-center px-0 py-3' : 'px-3 py-2.5',
+                    active
+                      ? 'bg-gradient-to-r from-violet-600 to-purple-600 text-white shadow-lg shadow-violet-500/20'
+                      : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-white/[0.05] dark:hover:text-slate-200')}>
+                  <item.Icon className={cn('flex-shrink-0', collapsed ? 'h-5 w-5' : 'h-[18px] w-[18px]')} />
+                  {!collapsed && <>
+                    <span>{item.label}</span>
+                    {item.adminOnly && <span className="ml-auto rounded-full bg-violet-500/20 px-1.5 py-0.5 text-[9px] font-semibold tracking-wider text-violet-600 dark:text-violet-400">ADMIN</span>}
+                  </>}
+                </button>
+              </div>
             )
           })}
         </div>
@@ -3053,7 +3088,7 @@ export default function DrizzleBotDashboard() {
 
   useEffect(() => {
     if (!user || user.role !== 'admin') return
-    sb.from('clients').select('id,name').then(({ data }) => {
+    sb.from('clients').select('id,name,status,last_active').then(({ data }) => {
       if (data) setClients(data as Client[])
     })
   }, [user])
