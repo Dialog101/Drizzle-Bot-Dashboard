@@ -11,6 +11,7 @@ import {
   Download, Clock, PhoneMissed, Globe, Save, Play, RefreshCw, CheckCircle2,
   Mail, Link2, ChevronLeft, Trash2, Pause,
   PhoneCall, Send, RotateCcw, UserPlus, Shield,
+  BarChart2, ClipboardList, User2, PlayCircle, Rocket,
 } from 'lucide-react'
 
 // ─── Supabase ─────────────────────────────────────────────────────────────────
@@ -22,7 +23,7 @@ const sb = createClient(
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Page = 'overview' | 'appointments' | 'calendar' | 'calls' | 'contacts' | 'messages' | 'controls' | 'users'
+type Page = 'overview' | 'appointments' | 'calendar' | 'calls' | 'contacts' | 'messages' | 'controls' | 'users' | 'reports' | 'audit' | 'profile'
 type Role = 'admin' | 'client'
 
 interface AppUser { id: string; email: string; role: Role; client_id: string | null; name: string }
@@ -37,6 +38,11 @@ interface Appointment {
 interface Call {
   id: string; date: string; caller_number: string; summary: string
   outcome: 'completed' | 'missed' | 'voicemail'; duration_seconds: number; client_id: string
+  recording_url?: string
+}
+interface AuditRow {
+  id: string; created_at: string; user_email: string; action: string
+  entity: string; entity_id?: string; details?: string
 }
 interface Contact {
   id: string; name: string; email: string; phone_number: string
@@ -67,8 +73,11 @@ const NAV_ITEMS: NavEntry[] = [
   { id: 'calls',        label: 'Call Logs',    Icon: Phone },
   { id: 'contacts',     label: 'Contacts',     Icon: Users },
   { id: 'messages',     label: 'Messages',     Icon: MessageSquare },
-  { id: 'users',        label: 'Users',        Icon: UserPlus,   adminOnly: true },
-  { id: 'controls',     label: 'Controls',     Icon: Settings2,  adminOnly: true },
+  { id: 'reports',      label: 'Reports',      Icon: BarChart2 },
+  { id: 'profile',      label: 'Profile',      Icon: User2 },
+  { id: 'users',        label: 'Users',        Icon: UserPlus,      adminOnly: true },
+  { id: 'audit',        label: 'Audit Log',    Icon: ClipboardList, adminOnly: true },
+  { id: 'controls',     label: 'Controls',     Icon: Settings2,     adminOnly: true },
 ]
 
 const WEBHOOK_KEYS: Record<string, string> = {
@@ -262,16 +271,17 @@ function TableSkeleton({ cols = 5, rows = 6 }: { cols?: number; rows?: number })
   )
 }
 
-function EmptyState({ icon: Icon, label, sub }: { icon: React.ComponentType<{ className?: string }>; label: string; sub?: string }) {
+function EmptyState({ icon: Icon, label, sub, action }: { icon: React.ComponentType<{ className?: string }>; label: string; sub?: string; action?: React.ReactNode }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-3 py-20">
+    <div className="flex flex-col items-center justify-center gap-4 py-20">
       <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 dark:border-white/[0.08] dark:bg-white/[0.03]">
         <Icon className="h-6 w-6 text-slate-400 dark:text-slate-600" />
       </div>
       <div className="text-center">
-        <p className="text-sm font-medium text-slate-500 dark:text-slate-400">{label}</p>
-        {sub && <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-600">{sub}</p>}
+        <p className="text-sm font-medium text-slate-700 dark:text-slate-300">{label}</p>
+        {sub && <p className="mt-1 max-w-xs text-xs leading-relaxed text-slate-400 dark:text-slate-500">{sub}</p>}
       </div>
+      {action && <div>{action}</div>}
     </div>
   )
 }
@@ -440,7 +450,7 @@ function NotificationsPanel({ notifications, onClose, onMarkRead, onMarkAllRead,
 
 // ─── Global Search ────────────────────────────────────────────────────────────
 
-function GlobalSearch({ clientId: _clientId }: { clientId: string | null; isAdmin: boolean }) {
+function GlobalSearch({ clientId, isAdmin: _isAdmin, onNavigate }: { clientId: string | null; isAdmin: boolean; onNavigate: (p: Page) => void }) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
   const [results, setResults] = useState<{ category: string; items: { id: string; label: string; sub: string }[] }[]>([])
@@ -456,9 +466,11 @@ function GlobalSearch({ clientId: _clientId }: { clientId: string | null; isAdmi
     if (!query.trim()) { setResults([]); setOpen(false); return }
     const t = setTimeout(async () => {
       setBusy(true); setOpen(true)
+      const apptQ = sb.from('appointments').select('id,email,appointment_type,date').ilike('email', `%${query}%`)
+      const contQ = sb.from('contacts').select('id,name,phone_number,email').ilike('name', `%${query}%`)
       const [appts, contacts] = await Promise.all([
-        sb.from('appointments').select('id,email,appointment_type,date').ilike('email', `%${query}%`).limit(5),
-        sb.from('contacts').select('id,name,phone_number,email').ilike('name', `%${query}%`).limit(5),
+        (clientId ? apptQ.eq('client_id', clientId) : apptQ).limit(5),
+        (clientId ? contQ.eq('client_id', clientId) : contQ).limit(5),
       ])
       const built = []
       if (appts.data?.length) built.push({ category: 'Appointments', items: appts.data.map(a => ({ id: a.id, label: a.email, sub: `${a.appointment_type} · ${formatDate(a.date)}` })) })
@@ -485,7 +497,9 @@ function GlobalSearch({ clientId: _clientId }: { clientId: string | null; isAdmi
                 <div key={g.category}>
                   <p className="px-4 py-1.5 text-[10px] font-semibold uppercase tracking-widest text-slate-400">{g.category}</p>
                   {g.items.map(item => (
-                    <button key={item.id} className="flex w-full items-start gap-3 px-4 py-2.5 text-left transition-colors hover:bg-slate-50 dark:hover:bg-white/[0.05]">
+                    <button key={item.id}
+                      onClick={() => { onNavigate(g.category === 'Appointments' ? 'appointments' : 'contacts'); setOpen(false); setQuery('') }}
+                      className="flex w-full items-start gap-3 px-4 py-2.5 text-left transition-colors hover:bg-slate-50 dark:hover:bg-white/[0.05]">
                       <div>
                         <p className="text-sm text-slate-900 dark:text-white">{item.label}</p>
                         <p className="text-xs text-slate-400">{item.sub}</p>
@@ -504,20 +518,25 @@ function GlobalSearch({ clientId: _clientId }: { clientId: string | null; isAdmi
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 
-function Sidebar({ user, clients, activePage, activeClientId, onNavigate, onClientChange, onSignOut, onToggleDark, dark, collapsed, onToggleCollapse }: {
+function Sidebar({ user, clients, activePage, activeClientId, onNavigate, onClientChange, onSignOut, onToggleDark, dark, collapsed, onToggleCollapse, mobileOpen = false, onCloseMobile = () => {} }: {
   user: AppUser; clients: Client[]; activePage: Page; activeClientId: string | null
   onNavigate: (p: Page) => void; onClientChange: (id: string | null) => void; onSignOut: () => void
   onToggleDark: () => void; dark: boolean; collapsed: boolean; onToggleCollapse: () => void
+  mobileOpen?: boolean; onCloseMobile?: () => void
 }) {
   const [clientDropOpen, setClientDropOpen] = useState(false)
   const activeClient = clients.find(c => c.id === activeClientId)
   const visibleNav = NAV_ITEMS.filter(n => !n.adminOnly || user.role === 'admin')
 
   return (
+    <>
+      {mobileOpen && <div className="fixed inset-0 z-30 bg-black/40 md:hidden" onClick={onCloseMobile} />}
     <aside className={cn(
-      'fixed left-0 top-0 z-40 flex h-full flex-col border-r transition-[width] duration-300',
+      'fixed left-0 top-0 z-40 flex h-full flex-col border-r transition-all duration-300',
       'border-slate-200 bg-white dark:border-white/[0.07] dark:bg-[#080b12]',
       collapsed ? 'w-[64px]' : 'w-64',
+      'max-md:w-64 max-md:shadow-2xl',
+      mobileOpen ? 'max-md:translate-x-0' : 'max-md:-translate-x-full',
     )}>
       {/* Logo */}
       <div className={cn('flex h-16 items-center border-b border-slate-200 px-4 dark:border-white/[0.07]', collapsed ? 'justify-center px-0' : 'gap-3')}>
@@ -605,35 +624,38 @@ function Sidebar({ user, clients, activePage, activeClientId, onNavigate, onClie
           <LogOut className="h-[18px] w-[18px] flex-shrink-0" />
           {!collapsed && <span>Sign out</span>}
         </button>
-        <div className={cn('mt-2 flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 py-2.5 dark:border-white/[0.06] dark:bg-white/[0.03]', collapsed ? 'justify-center px-0' : 'px-3')}>
+        <button onClick={() => onNavigate('profile')}
+          className={cn('mt-2 flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 py-2.5 transition-colors hover:bg-slate-100 dark:border-white/[0.06] dark:bg-white/[0.03] dark:hover:bg-white/[0.06]', collapsed ? 'justify-center px-0' : 'px-3')}>
           <div className="relative flex-shrink-0">
             <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-violet-500 to-purple-700 text-sm font-bold text-white">
               {(user.name || user.email).charAt(0).toUpperCase()}
             </div>
             <div className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-white bg-emerald-400 dark:border-[#080b12]" />
           </div>
-          {!collapsed && <div className="min-w-0 flex-1">
+          {!collapsed && <div className="min-w-0 flex-1 text-left">
             <p className="truncate text-xs font-semibold text-slate-900 dark:text-white">{user.name || 'User'}</p>
             <p className="truncate text-[10px] text-slate-400 dark:text-slate-500">{user.email}</p>
           </div>}
-        </div>
+        </button>
       </div>
     </aside>
+    </>
   )
 }
 
 // ─── Overview Page ────────────────────────────────────────────────────────────
 
-function OverviewPage({ user, activeClientId }: PageProps) {
+function OverviewPage({ user, activeClientId, onNavigate }: PageProps & { onNavigate: (p: Page) => void }) {
   const [stats, setStats] = useState<OverviewStats>({ todayAppointments: 0, totalCalls: 0, totalContacts: 0, totalMessages: 0 })
   const [statsLoading, setStatsLoading] = useState(true)
   const [appointments, setAppointments] = useState<Appointment[]>([])
   const [apptLoading, setApptLoading] = useState(true)
+  const [selectedAppt, setSelectedAppt] = useState<Appointment | null>(null)
   const [sparkData, setSparkData] = useState<Record<string, { value: number }[]>>({
-    appointments: Array(15).fill({ value: 0 }),
-    calls: Array(15).fill({ value: 0 }),
-    contacts: Array(15).fill({ value: 0 }),
-    messages: Array(15).fill({ value: 0 }),
+    appointments: Array.from({ length: 15 }, () => ({ value: 0 })),
+    calls: Array.from({ length: 15 }, () => ({ value: 0 })),
+    contacts: Array.from({ length: 15 }, () => ({ value: 0 })),
+    messages: Array.from({ length: 15 }, () => ({ value: 0 })),
   })
   const [trends, setTrends] = useState<Record<string, { value: number; up: boolean }>>({
     appointments: { value: 0, up: true }, calls: { value: 0, up: true },
@@ -647,15 +669,14 @@ function OverviewPage({ user, activeClientId }: PageProps) {
   }, [user, activeClientId])
 
   const loadData = useCallback(() => {
-    const today = new Date().toISOString().slice(0, 10)
     const since28 = new Date(); since28.setDate(since28.getDate() - 28)
     const since28Str = since28.toISOString()
     setStatsLoading(true)
     Promise.all([
-      addFilter(sb.from('appointments').select('id', { count: 'exact', head: true }).gte('date', `${today}T00:00:00`).lte('date', `${today}T23:59:59`).is('deleted_at', null)),
-      addFilter(sb.from('calls').select('id', { count: 'exact', head: true })),
-      addFilter(sb.from('contacts').select('id', { count: 'exact', head: true })),
-      addFilter(sb.from('messages').select('id', { count: 'exact', head: true })),
+      addFilter(sb.from('appointments').select('id', { count: 'exact', head: true }).gte('date', since28Str).is('deleted_at', null)),
+      addFilter(sb.from('calls').select('id', { count: 'exact', head: true }).gte('date', since28Str)),
+      addFilter(sb.from('contacts').select('id', { count: 'exact', head: true }).gte('created_at', since28Str)),
+      addFilter(sb.from('messages').select('id', { count: 'exact', head: true }).gte('created_at', since28Str)),
       addFilter(sb.from('appointments').select('date').gte('date', since28Str).is('deleted_at', null)),
       addFilter(sb.from('calls').select('date').gte('date', since28Str)),
       addFilter(sb.from('contacts').select('created_at').gte('created_at', since28Str)),
@@ -692,8 +713,8 @@ function OverviewPage({ user, activeClientId }: PageProps) {
   }, [loadData])
 
   const cards = [
-    { label: "Today's Appointments", value: stats.todayAppointments, color: '#7c3aed', gradientId: 'grad-appt',  sparkData: sparkData.appointments, icon: <CalendarDays className="h-5 w-5" />, trend: trends.appointments },
-    { label: 'Total Calls',          value: stats.totalCalls,        color: '#2563eb', gradientId: 'grad-calls', sparkData: sparkData.calls,         icon: <Phone         className="h-5 w-5" />, trend: trends.calls        },
+    { label: 'Appointments',          value: stats.todayAppointments, color: '#7c3aed', gradientId: 'grad-appt',  sparkData: sparkData.appointments, icon: <CalendarDays className="h-5 w-5" />, trend: trends.appointments },
+    { label: 'Calls',                value: stats.totalCalls,        color: '#2563eb', gradientId: 'grad-calls', sparkData: sparkData.calls,         icon: <Phone         className="h-5 w-5" />, trend: trends.calls        },
     { label: 'Contacts',             value: stats.totalContacts,     color: '#059669', gradientId: 'grad-cont',  sparkData: sparkData.contacts,      icon: <Users         className="h-5 w-5" />, trend: trends.contacts     },
     { label: 'Messages',             value: stats.totalMessages,     color: '#d97706', gradientId: 'grad-msg',   sparkData: sparkData.messages,      icon: <MessageSquare className="h-5 w-5" />, trend: trends.messages     },
   ]
@@ -713,7 +734,7 @@ function OverviewPage({ user, activeClientId }: PageProps) {
             <h2 className="text-sm font-semibold text-slate-900 dark:text-white" style={{ fontFamily: "'Space Grotesk',sans-serif" }}>Recent Appointments</h2>
             <p className="text-xs text-slate-400 dark:text-slate-500">Latest AI-booked sessions</p>
           </div>
-          <button className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm transition-colors hover:bg-slate-50 dark:border-white/[0.08] dark:bg-transparent dark:text-slate-400 dark:hover:bg-white/[0.05] dark:hover:text-white">View all</button>
+          <button onClick={() => onNavigate('appointments')} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm transition-colors hover:bg-slate-50 dark:border-white/[0.08] dark:bg-transparent dark:text-slate-400 dark:hover:bg-white/[0.05] dark:hover:text-white">View all</button>
         </div>
         {apptLoading ? <TableSkeleton cols={5} rows={5} /> :
          appointments.length === 0 ? <EmptyState icon={CalendarDays} label="No appointments yet" /> : (
@@ -728,7 +749,7 @@ function OverviewPage({ user, activeClientId }: PageProps) {
                     <td className="px-6 py-4 text-sm text-slate-500 dark:text-slate-400">{r.contact_phone}</td>
                     <td className="px-6 py-4 text-sm text-slate-500 dark:text-slate-400">{formatDate(r.date)}</td>
                     <td className="px-6 py-4"><StatusBadge status={r.status} /></td>
-                    <td className="px-6 py-4"><button className="rounded-lg p-1.5 text-slate-300 opacity-0 transition-all hover:bg-slate-100 hover:text-slate-600 group-hover:opacity-100 dark:text-slate-600 dark:hover:bg-white/10 dark:hover:text-white"><MoreHorizontal className="h-4 w-4" /></button></td>
+                    <td className="px-6 py-4"><button onClick={e => { e.stopPropagation(); setSelectedAppt(r) }} className="rounded-lg p-1.5 text-slate-300 opacity-0 transition-all hover:bg-slate-100 hover:text-slate-600 group-hover:opacity-100 dark:text-slate-600 dark:hover:bg-white/10 dark:hover:text-white"><MoreHorizontal className="h-4 w-4" /></button></td>
                   </tr>
                 ))}
               </tbody>
@@ -736,6 +757,12 @@ function OverviewPage({ user, activeClientId }: PageProps) {
           </div>
         )}
       </GlassCard>
+      <AppointmentDrawer
+        appt={selectedAppt}
+        onClose={() => setSelectedAppt(null)}
+        onSaved={updated => setAppointments(rs => rs.map(r => r.id === updated.id ? updated : r))}
+        onDelete={() => setSelectedAppt(null)}
+      />
     </div>
   )
 }
@@ -759,7 +786,7 @@ function AppointmentDrawer({ appt, onClose, onSaved, onDelete }: {
     setStatus(appt.status)
     const d = new Date(appt.date)
     setDate(d.toISOString().slice(0, 10))
-    setTime(d.toTimeString().slice(0, 5))
+    setTime(`${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`)
     setNotes(appt.notes ?? '')
   }, [appt])
 
@@ -907,6 +934,8 @@ function AppointmentsPage({ user, activeClientId }: PageProps) {
     q.then(({ data }: any) => { setRows((data as Appointment[]) ?? []); setLoading(false) })
   }, [addFilter, status, dateFrom, dateTo])
 
+  useEffect(() => { setSelectedAppt(null) }, [activeClientId])
+
   async function loadDeleted() {
     setDeletedLoading(true)
     const q = addFilter(sb.from('appointments').select('*').not('deleted_at', 'is', null).order('deleted_at', { ascending: false }).limit(30))
@@ -968,7 +997,15 @@ function AppointmentsPage({ user, activeClientId }: PageProps) {
           <ExportButton onClick={() => exportCSV('appointments.csv', ['Email','Type','Phone','Date','Status'], rows.map(r => [r.email, r.appointment_type, r.contact_phone, r.date, r.status]))} />
         </div>
         {loading ? <TableSkeleton cols={6} /> :
-         rows.length === 0 ? <EmptyState icon={CalendarDays} label="No appointments found" sub="Try adjusting your filters" /> : (
+         rows.length === 0 ? (
+           status !== 'all' || dateFrom || dateTo
+             ? <EmptyState icon={CalendarDays} label="No appointments match your filters"
+                 sub="Try a different date range or status filter"
+                 action={<button onClick={() => { setStatus('all'); setDateFrom(''); setDateTo('') }}
+                   className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50 dark:border-white/[0.08] dark:text-slate-400 dark:hover:bg-white/[0.06]">Clear filters</button>} />
+             : <EmptyState icon={CalendarDays} label="No appointments yet"
+                 sub="DrizzleBot will automatically book and log appointments here as they come in" />
+         ) : (
           <div className="overflow-x-auto">
             <table className="w-full">
               <TableHead cols={['Contact', 'Type', 'Phone', 'Date & Time', 'Status', '']} />
@@ -1046,11 +1083,16 @@ function AppointmentsPage({ user, activeClientId }: PageProps) {
 
 // ─── Call Logs Page ───────────────────────────────────────────────────────────
 
+const CALLS_PAGE = 50
+
 function CallLogsPage({ user, activeClientId }: PageProps) {
   const [calls, setCalls] = useState<Call[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [outcome, setOutcome] = useState('all')
+  const [limit, setLimit] = useState(CALLS_PAGE)
+  const [hasMore, setHasMore] = useState(false)
 
   const addFilter = useCallback((q: any) => {
     if (user.role === 'admin' && activeClientId) return q.eq('client_id', activeClientId)
@@ -1059,11 +1101,21 @@ function CallLogsPage({ user, activeClientId }: PageProps) {
   }, [user, activeClientId])
 
   useEffect(() => {
-    setLoading(true)
-    let q = addFilter(sb.from('calls').select('*').order('date', { ascending: false }).limit(100))
-    if (outcome !== 'all') q = q.eq('outcome', outcome)
-    q.then(({ data }: any) => { setCalls((data as Call[]) ?? []); setLoading(false) })
+    setLimit(CALLS_PAGE)
   }, [addFilter, outcome])
+
+  useEffect(() => {
+    const isInitial = limit === CALLS_PAGE
+    if (isInitial) setLoading(true); else setLoadingMore(true)
+    let q = addFilter(sb.from('calls').select('*').order('date', { ascending: false }).limit(limit + 1))
+    if (outcome !== 'all') q = q.eq('outcome', outcome)
+    q.then(({ data }: any) => {
+      const rows = (data as Call[]) ?? []
+      setHasMore(rows.length > limit)
+      setCalls(rows.slice(0, limit))
+      if (isInitial) setLoading(false); else setLoadingMore(false)
+    })
+  }, [addFilter, outcome, limit])
 
   const toggle = (id: string) => setExpanded(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s })
 
@@ -1081,7 +1133,14 @@ function CallLogsPage({ user, activeClientId }: PageProps) {
           <ExportButton onClick={() => exportCSV('calls.csv', ['Date','Caller','Duration','Outcome','Summary'], calls.map(c => [c.date, c.caller_number, formatDuration(c.duration_seconds), c.outcome, c.summary]))} />
         </div>
         {loading ? <TableSkeleton cols={4} /> :
-         calls.length === 0 ? <EmptyState icon={Phone} label="No call logs found" /> : (
+         calls.length === 0 ? (
+           outcome !== 'all'
+             ? <EmptyState icon={Phone} label="No calls match this filter"
+                 action={<button onClick={() => setOutcome('all')}
+                   className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50 dark:border-white/[0.08] dark:text-slate-400 dark:hover:bg-white/[0.06]">Clear filter</button>} />
+             : <EmptyState icon={Phone} label="No calls yet"
+                 sub="DrizzleBot logs every call automatically — completed, missed, and voicemail." />
+         ) : (
           <div className="divide-y divide-slate-100 dark:divide-white/[0.04]">
             {calls.map(call => {
               const isOpen = expanded.has(call.id)
@@ -1119,12 +1178,28 @@ function CallLogsPage({ user, activeClientId }: PageProps) {
                         <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-white/[0.06] dark:bg-white/[0.03]">
                           <p className="text-sm leading-relaxed text-slate-700 dark:text-slate-300 whitespace-pre-wrap">{call.summary || 'No summary available for this call.'}</p>
                         </div>
+                        {call.recording_url && (
+                          <a href={call.recording_url} target="_blank" rel="noopener noreferrer"
+                            className="mt-3 inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50 dark:border-white/[0.08] dark:text-slate-400 dark:hover:bg-white/[0.06]">
+                            <PlayCircle className="h-4 w-4 text-violet-600 dark:text-violet-400" />
+                            Play recording
+                          </a>
+                        )}
                       </div>
                     </div>
                   )}
                 </div>
               )
             })}
+          </div>
+        )}
+        {hasMore && (
+          <div className="border-t border-slate-100 px-6 py-4 dark:border-white/[0.04]">
+            <button onClick={() => setLimit(l => l + CALLS_PAGE)} disabled={loadingMore}
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 py-2.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50 dark:border-white/[0.08] dark:text-slate-400 dark:hover:bg-white/[0.06]">
+              {loadingMore ? <RefreshCw className="h-4 w-4 animate-spin" /> : <ChevronDown className="h-4 w-4" />}
+              {loadingMore ? 'Loading…' : `Load more (showing ${calls.length})`}
+            </button>
           </div>
         )}
       </GlassCard>
@@ -1557,12 +1632,20 @@ function ContactProfileDrawer({ contact, onClose, onSaved }: {
 
 // ─── Contacts Page ────────────────────────────────────────────────────────────
 
+const CONTACTS_PAGE = 50
+
 function ContactsPage({ user, activeClientId }: PageProps) {
   const [rows, setRows] = useState<Contact[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('all')
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null)
+  const [limit, setLimit] = useState(CONTACTS_PAGE)
+  const [hasMore, setHasMore] = useState(false)
+
+  useEffect(() => { setSelectedContact(null) }, [activeClientId])
+  useEffect(() => { setLimit(CONTACTS_PAGE) }, [search, status, activeClientId])
 
   const addFilter = useCallback((q: any) => {
     if (user.role === 'admin' && activeClientId) return q.eq('client_id', activeClientId)
@@ -1571,15 +1654,22 @@ function ContactsPage({ user, activeClientId }: PageProps) {
   }, [user, activeClientId])
 
   useEffect(() => {
-    const t = setTimeout(() => {
-      setLoading(true)
-      let q = addFilter(sb.from('contacts').select('*').order('name').limit(100))
+    const isInitial = limit === CONTACTS_PAGE
+    const run = () => {
+      if (isInitial) setLoading(true); else setLoadingMore(true)
+      let q = addFilter(sb.from('contacts').select('*').order('name').limit(limit + 1))
       if (status !== 'all') q = q.eq('status', status)
       if (search) q = q.or(`name.ilike.%${search}%,email.ilike.%${search}%,phone_number.ilike.%${search}%`)
-      q.then(({ data }: any) => { setRows((data as Contact[]) ?? []); setLoading(false) })
-    }, search ? 300 : 0)
+      q.then(({ data }: any) => {
+        const fetched = (data as Contact[]) ?? []
+        setHasMore(fetched.length > limit)
+        setRows(fetched.slice(0, limit))
+        if (isInitial) setLoading(false); else setLoadingMore(false)
+      })
+    }
+    const t = search ? setTimeout(run, 300) : (run(), undefined)
     return () => clearTimeout(t)
-  }, [addFilter, status, search])
+  }, [addFilter, status, search, limit])
 
   return (
     <div className="space-y-6">
@@ -1601,7 +1691,14 @@ function ContactsPage({ user, activeClientId }: PageProps) {
           <ExportButton onClick={() => exportCSV('contacts.csv', ['Name','Email','Phone','Status'], rows.map(r => [r.name, r.email, r.phone_number ?? r.phone ?? '', r.status]))} />
         </div>
         {loading ? <TableSkeleton cols={4} /> :
-         rows.length === 0 ? <EmptyState icon={Users} label="No contacts found" sub="Try adjusting your search or filters" /> : (
+         rows.length === 0 ? (
+           search || status !== 'all'
+             ? <EmptyState icon={Users} label="No contacts match your search"
+                 action={<button onClick={() => { setSearch(''); setStatus('all') }}
+                   className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50 dark:border-white/[0.08] dark:text-slate-400 dark:hover:bg-white/[0.06]">Clear search</button>} />
+             : <EmptyState icon={Users} label="No contacts yet"
+                 sub="Contacts are created automatically from inbound calls, messages, and appointments." />
+         ) : (
           <div className="overflow-x-auto">
             <table className="w-full">
               <TableHead cols={['Name', 'Email', 'Phone', 'Status', '']} />
@@ -1627,6 +1724,15 @@ function ContactsPage({ user, activeClientId }: PageProps) {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+        {hasMore && (
+          <div className="border-t border-slate-100 px-6 py-4 dark:border-white/[0.04]">
+            <button onClick={() => setLimit(l => l + CONTACTS_PAGE)} disabled={loadingMore}
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 py-2.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50 dark:border-white/[0.08] dark:text-slate-400 dark:hover:bg-white/[0.06]">
+              {loadingMore ? <RefreshCw className="h-4 w-4 animate-spin" /> : <ChevronDown className="h-4 w-4" />}
+              {loadingMore ? 'Loading…' : `Load more (showing ${rows.length})`}
+            </button>
           </div>
         )}
       </GlassCard>
@@ -1738,7 +1844,8 @@ function MessagesPage({ user, activeClientId }: PageProps) {
                   ))}
                 </div>
               ) : threads.length === 0 ? (
-                <EmptyState icon={MessageSquare} label="No messages yet" />
+                <EmptyState icon={MessageSquare} label="No messages yet"
+                  sub="Conversations will appear here once DrizzleBot starts handling inbound messages." />
               ) : (
                 threads.map(t => {
                   const isActive = t.key === selectedThread
@@ -2101,7 +2208,12 @@ create policy "admins can manage profiles" on profiles
       <GlassCard>
         {loading ? <TableSkeleton cols={5} /> :
          profiles.length === 0
-           ? <EmptyState icon={Users} label="No users yet" sub="Invite your first user to get started" />
+           ? <EmptyState icon={Users} label="No users yet"
+               sub="Invite your first team member to grant them portal access."
+               action={<button onClick={() => setShowInvite(true)}
+                 className="flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-500/20 transition-colors hover:bg-violet-500">
+                 <UserPlus className="h-4 w-4" />Invite first user
+               </button>} />
            : (
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -2154,6 +2266,8 @@ create policy "admins can manage profiles" on profiles
 interface CalClient { id: string; name: string; calendar_webhook_url: string | null }
 type LogEntry = { time: string; msg: string; ok: boolean }
 
+const BIZ_DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']
+
 function ControlsPage({ user, activeClientId }: PageProps) {
   const [paused, setPaused]       = useState(false)
   const [actionLog, setActionLog] = useState<LogEntry[]>([])
@@ -2168,8 +2282,23 @@ function ControlsPage({ user, activeClientId }: PageProps) {
     Object.fromEntries(Object.entries(WEBHOOK_KEYS).map(([k, v]) => [k, localStorage.getItem(v) ?? '']))
   )
   const [whSaved, setWhSaved]     = useState(false)
+  const [bizHours, setBizHours]   = useState<{ enabled: boolean; open: string; close: string }[]>(() => {
+    if (typeof window === 'undefined') return BIZ_DAYS.map((_, i) => ({ enabled: i >= 1 && i <= 5, open: '09:00', close: '17:00' }))
+    const saved = localStorage.getItem('biz-hours')
+    if (saved) try { return JSON.parse(saved) } catch {}
+    return BIZ_DAYS.map((_, i) => ({ enabled: i >= 1 && i <= 5, open: '09:00', close: '17:00' }))
+  })
+  const [bizSaved, setBizSaved]   = useState(false)
+  const [showOnboarding, setShowOnboarding] = useState(false)
+  const [onboardClients, setOnboardClients] = useState<Client[]>([])
 
   const effectiveClient = activeClientId ?? user.client_id
+
+  function saveBizHours() {
+    localStorage.setItem('biz-hours', JSON.stringify(bizHours))
+    setBizSaved(true); setTimeout(() => setBizSaved(false), 2000)
+    showToast('Business hours saved', 'success')
+  }
 
   useEffect(() => {
     if (user.role !== 'admin') return
@@ -2399,7 +2528,504 @@ function ControlsPage({ user, activeClientId }: PageProps) {
           </div>
         </GlassCard>
 
+        {/* Business Hours */}
+        <GlassCard className="lg:col-span-2">
+          <div className="space-y-4 p-6">
+            <div className="flex items-start justify-between">
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-emerald-500/10">
+                  <Clock className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900 dark:text-white" style={{ fontFamily: "'Space Grotesk',sans-serif" }}>Business Hours</h3>
+                  <p className="mt-0.5 text-xs text-slate-400">DrizzleBot routes after-hours calls to voicemail</p>
+                </div>
+              </div>
+              <button onClick={saveBizHours}
+                className={cn('flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition-all',
+                  bizSaved ? 'bg-emerald-500/10 text-emerald-600 ring-1 ring-emerald-500/20 dark:text-emerald-400' : 'bg-violet-600 text-white hover:bg-violet-500 shadow-lg shadow-violet-500/20')}>
+                {bizSaved ? <><CheckCircle2 className="h-4 w-4" />Saved</> : <><Save className="h-4 w-4" />Save</>}
+              </button>
+            </div>
+            <div className="space-y-1.5">
+              {BIZ_DAYS.map((day, i) => (
+                <div key={day} className={cn('flex items-center gap-4 rounded-xl px-4 py-2.5 transition-colors', bizHours[i].enabled ? 'bg-slate-50 dark:bg-white/[0.03]' : 'opacity-50')}>
+                  <button onClick={() => setBizHours(h => h.map((d, j) => j === i ? { ...d, enabled: !d.enabled } : d))}
+                    className={cn('relative h-5 w-9 flex-shrink-0 rounded-full transition-colors duration-200', bizHours[i].enabled ? 'bg-violet-600' : 'bg-slate-200 dark:bg-white/[0.12]')}>
+                    <span className={cn('absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200', bizHours[i].enabled ? 'translate-x-4' : 'translate-x-0.5')} />
+                  </button>
+                  <span className="w-24 flex-shrink-0 text-sm font-medium text-slate-700 dark:text-slate-300">{day}</span>
+                  <input type="time" disabled={!bizHours[i].enabled} value={bizHours[i].open}
+                    onChange={e => setBizHours(h => h.map((d, j) => j === i ? { ...d, open: e.target.value } : d))}
+                    className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 outline-none disabled:opacity-40 dark:border-white/[0.08] dark:bg-transparent dark:text-slate-300" />
+                  <span className="text-xs text-slate-400">to</span>
+                  <input type="time" disabled={!bizHours[i].enabled} value={bizHours[i].close}
+                    onChange={e => setBizHours(h => h.map((d, j) => j === i ? { ...d, close: e.target.value } : d))}
+                    className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 outline-none disabled:opacity-40 dark:border-white/[0.08] dark:bg-transparent dark:text-slate-300" />
+                  {!bizHours[i].enabled && <span className="text-xs text-slate-400">Closed</span>}
+                </div>
+              ))}
+            </div>
+          </div>
+        </GlassCard>
+
+        {/* Onboard New Client */}
+        <GlassCard className="lg:col-span-2">
+          <div className="flex items-center justify-between p-6">
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-violet-500/10">
+                <Rocket className="h-4 w-4 text-violet-600 dark:text-violet-400" />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-white" style={{ fontFamily: "'Space Grotesk',sans-serif" }}>Onboard New Client</h3>
+                <p className="mt-0.5 text-xs text-slate-400">Create a new client account and configure their DrizzleBot setup</p>
+              </div>
+            </div>
+            <button onClick={() => { sb.from('clients').select('id,name').then(({ data }) => setOnboardClients((data as Client[]) ?? [])); setShowOnboarding(true) }}
+              className="flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-500/20 transition-colors hover:bg-violet-500">
+              <Rocket className="h-4 w-4" />Start onboarding
+            </button>
+          </div>
+        </GlassCard>
+
       </div>
+      {showOnboarding && (
+        <OnboardingModal clients={onboardClients} onClose={() => setShowOnboarding(false)}
+          onCreated={c => { setOnboardClients(cs => [...cs, c]); setShowOnboarding(false) }} />
+      )}
+    </div>
+  )
+}
+
+// ─── Onboarding Modal ────────────────────────────────────────────────────────
+
+function OnboardingModal({ clients: _clients, onClose, onCreated }: { clients: Client[]; onClose: () => void; onCreated: (c: Client) => void }) {
+  const [step, setStep] = useState(0)
+  const [name, setName] = useState('')
+  const [phone, setPhone] = useState('')
+  const [calUrl, setCalUrl] = useState('')
+  const [busy, setBusy] = useState(false)
+  const steps = ['Client details', 'Configuration', 'Review']
+
+  async function create() {
+    if (!name.trim()) return
+    setBusy(true)
+    const { data, error } = await sb.from('clients').insert({
+      name: name.trim(),
+      phone_number: phone.trim() || null,
+      calendar_webhook_url: calUrl.trim() || null,
+    }).select('id,name').single()
+    if (error) { showToast('Failed: ' + error.message, 'error'); setBusy(false); return }
+    showToast(`Client "${name}" created`, 'success')
+    onCreated(data as Client)
+    setBusy(false)
+  }
+
+  return (
+    <>
+      <div className="fixed inset-0 z-40 bg-black/30 backdrop-blur-sm" onClick={onClose} />
+      <div className="fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-white/[0.08] dark:bg-[#0e1117]">
+        <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 dark:border-white/[0.07]">
+          <div>
+            <h2 className="text-base font-semibold text-slate-900 dark:text-white" style={{ fontFamily: "'Space Grotesk',sans-serif" }}>Onboard New Client</h2>
+            <p className="mt-0.5 text-xs text-slate-400">Step {step + 1} of {steps.length} — {steps[step]}</p>
+          </div>
+          <button onClick={onClose} className="rounded-xl p-2 text-slate-400 transition-colors hover:bg-slate-100 dark:hover:bg-white/10"><X className="h-5 w-5" /></button>
+        </div>
+        <div className="flex gap-1.5 px-6 pt-4">
+          {steps.map((s, i) => <div key={s} className={cn('h-1 flex-1 rounded-full transition-colors', i <= step ? 'bg-violet-600' : 'bg-slate-100 dark:bg-white/[0.08]')} />)}
+        </div>
+        <div className="space-y-4 p-6">
+          {step === 0 && <>
+            <div>
+              <label className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">Business name *</label>
+              <input value={name} onChange={e => setName(e.target.value)} placeholder="Acme Dental"
+                className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-400/20 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-slate-300" />
+            </div>
+            <div>
+              <label className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">Business phone</label>
+              <div className="mt-1 flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 dark:border-white/[0.08] dark:bg-white/[0.03]">
+                <Phone className="h-3.5 w-3.5 flex-shrink-0 text-slate-400" />
+                <input type="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="+1 555 000 0000"
+                  className="flex-1 bg-transparent text-sm text-slate-700 placeholder-slate-400 outline-none dark:text-slate-300" />
+              </div>
+            </div>
+          </>}
+          {step === 1 && (
+            <div>
+              <label className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">Calendar webhook URL</label>
+              <p className="mb-2 mt-0.5 text-xs text-slate-400">Syncs appointments with the client's calendar.</p>
+              <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 dark:border-white/[0.08] dark:bg-white/[0.03]">
+                <Globe className="h-3.5 w-3.5 flex-shrink-0 text-slate-400" />
+                <input type="url" value={calUrl} onChange={e => setCalUrl(e.target.value)} placeholder="https://…/webhook/calendar"
+                  className="flex-1 bg-transparent text-sm text-slate-700 placeholder-slate-400 outline-none dark:text-slate-300" />
+              </div>
+            </div>
+          )}
+          {step === 2 && (
+            <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-white/[0.08] dark:bg-white/[0.03]">
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">Review</p>
+              {[['Business name', name || '—'], ['Phone', phone || '—'], ['Calendar URL', calUrl || '—']].map(([k, v]) => (
+                <div key={k} className="flex justify-between text-sm">
+                  <span className="text-slate-400">{k}</span>
+                  <span className="font-medium text-slate-700 dark:text-slate-300 truncate ml-4">{v}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="flex items-center justify-between border-t border-slate-200 px-6 py-4 dark:border-white/[0.07]">
+          <button onClick={() => step > 0 ? setStep(s => s - 1) : onClose()}
+            className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm text-slate-500 transition-colors hover:bg-slate-50 dark:border-white/[0.08] dark:hover:bg-white/[0.04]">
+            {step === 0 ? 'Cancel' : 'Back'}
+          </button>
+          {step < steps.length - 1
+            ? <button onClick={() => setStep(s => s + 1)} disabled={step === 0 && !name.trim()}
+                className="flex items-center gap-2 rounded-xl bg-violet-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-500/20 transition-colors hover:bg-violet-500 disabled:opacity-50">
+                Continue <ChevronRight className="h-4 w-4" />
+              </button>
+            : <button onClick={create} disabled={busy || !name.trim()}
+                className="flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-emerald-500/20 transition-colors hover:bg-emerald-500 disabled:opacity-50">
+                {busy ? <RefreshCw className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                Create client
+              </button>
+          }
+        </div>
+      </div>
+    </>
+  )
+}
+
+// ─── Reports Page ─────────────────────────────────────────────────────────────
+
+function ReportsPage({ user, activeClientId }: PageProps) {
+  const [dateFrom, setDateFrom] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 28); return d.toISOString().slice(0, 10) })
+  const [dateTo, setDateTo]     = useState(() => new Date().toISOString().slice(0, 10))
+  const [data, setData]         = useState<{ appointments: Appointment[]; calls: Call[]; contacts: Contact[]; messages: Message[] } | null>(null)
+  const [loading, setLoading]   = useState(false)
+
+  const addFilter = useCallback((q: any) => {
+    if (user.role === 'admin' && activeClientId) return q.eq('client_id', activeClientId)
+    if (user.role === 'client' && user.client_id) return q.eq('client_id', user.client_id)
+    return q
+  }, [user, activeClientId])
+
+  const run = useCallback(() => {
+    if (!dateFrom || !dateTo) return
+    setLoading(true)
+    const from = `${dateFrom}T00:00:00`, to = `${dateTo}T23:59:59`
+    Promise.all([
+      addFilter(sb.from('appointments').select('*').gte('date', from).lte('date', to).is('deleted_at', null).order('date', { ascending: false })),
+      addFilter(sb.from('calls').select('*').gte('date', from).lte('date', to).order('date', { ascending: false })),
+      addFilter(sb.from('contacts').select('*').gte('created_at', from).lte('created_at', to).order('created_at', { ascending: false })),
+      addFilter(sb.from('messages').select('*').gte('created_at', from).lte('created_at', to).order('created_at', { ascending: false })),
+    ]).then(([a, c, co, m]) => {
+      setData({ appointments: (a.data as Appointment[]) ?? [], calls: (c.data as Call[]) ?? [], contacts: (co.data as Contact[]) ?? [], messages: (m.data as Message[]) ?? [] })
+      setLoading(false)
+    })
+  }, [addFilter, dateFrom, dateTo])
+
+  useEffect(() => { run() }, [run])
+
+  const summary = data ? [
+    { label: 'Appointments', value: data.appointments.length, icon: <CalendarDays className="h-5 w-5" />, color: '#7c3aed',
+      breakdown: { Confirmed: data.appointments.filter(a => a.status === 'confirmed').length, Pending: data.appointments.filter(a => a.status === 'pending').length, Cancelled: data.appointments.filter(a => a.status === 'cancelled').length } },
+    { label: 'Calls', value: data.calls.length, icon: <Phone className="h-5 w-5" />, color: '#2563eb',
+      breakdown: { Completed: data.calls.filter(c => c.outcome === 'completed').length, Missed: data.calls.filter(c => c.outcome === 'missed').length, Voicemail: data.calls.filter(c => c.outcome === 'voicemail').length } },
+    { label: 'New Contacts', value: data.contacts.length, icon: <Users className="h-5 w-5" />, color: '#059669',
+      breakdown: { Active: data.contacts.filter(c => c.status === 'active').length, Lead: data.contacts.filter(c => c.status === 'lead').length, Inactive: data.contacts.filter(c => c.status === 'inactive').length } },
+    { label: 'Messages', value: data.messages.length, icon: <MessageSquare className="h-5 w-5" />, color: '#d97706',
+      breakdown: { Inbound: data.messages.filter(m => m.direction === 'inbound').length, Outbound: data.messages.filter(m => m.direction === 'outbound').length } },
+  ] : []
+
+  return (
+    <div className="space-y-6">
+      <PageHeader title="Reports" subtitle="Activity summary for a custom date range" />
+      <GlassCard>
+        <div className="flex flex-wrap items-center gap-3 px-6 py-4">
+          <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-white/[0.08] dark:bg-white/[0.04]">
+            <Calendar className="h-3.5 w-3.5 text-slate-400" />
+            <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="bg-transparent text-xs text-slate-700 outline-none dark:text-slate-300" />
+            <span className="text-slate-300 dark:text-slate-600">–</span>
+            <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="bg-transparent text-xs text-slate-700 outline-none dark:text-slate-300" />
+          </div>
+          <button onClick={run} disabled={loading}
+            className="flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-violet-500/20 transition-colors hover:bg-violet-500 disabled:opacity-50">
+            {loading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <BarChart2 className="h-3.5 w-3.5" />}
+            {loading ? 'Loading…' : 'Run report'}
+          </button>
+          {data && (
+            <div className="ml-auto flex flex-wrap gap-2">
+              {[
+                { label: 'Appts', rows: data.appointments.map(r => [r.email, r.appointment_type, r.date, r.status]), headers: ['Email','Type','Date','Status'], file: 'appointments.csv' },
+                { label: 'Calls', rows: data.calls.map(c => [c.date, c.caller_number, formatDuration(c.duration_seconds), c.outcome]), headers: ['Date','Caller','Duration','Outcome'], file: 'calls.csv' },
+                { label: 'Contacts', rows: data.contacts.map(r => [r.name, r.email ?? '', r.phone_number ?? '', r.status]), headers: ['Name','Email','Phone','Status'], file: 'contacts.csv' },
+              ].map(e => (
+                <button key={e.label} onClick={() => exportCSV(e.file, e.headers, e.rows)}
+                  className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50 dark:border-white/[0.08] dark:bg-transparent dark:text-slate-400 dark:hover:bg-white/[0.06]">
+                  <Download className="h-3.5 w-3.5" />{e.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </GlassCard>
+      {loading && <TableSkeleton cols={4} rows={3} />}
+      {data && !loading && (
+        <>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            {summary.map(s => (
+              <div key={s.label} className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-white/[0.08] dark:bg-white/[0.04]">
+                <div className="mb-3 flex items-center gap-2">
+                  <span style={{ color: s.color }}>{s.icon}</span>
+                  <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">{s.label}</p>
+                </div>
+                <p className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white" style={{ fontFamily: "'Space Grotesk',sans-serif" }}>{s.value}</p>
+                <div className="mt-3 space-y-1">
+                  {Object.entries(s.breakdown).map(([k, v]) => (
+                    <div key={k} className="flex items-center justify-between text-xs">
+                      <span className="text-slate-400">{k}</span>
+                      <span className="font-medium text-slate-600 dark:text-slate-300">{v}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+          {data.appointments.length > 0 && (
+            <GlassCard>
+              <div className="border-b border-slate-200 px-6 py-4 dark:border-white/[0.07]">
+                <h2 className="text-sm font-semibold text-slate-900 dark:text-white" style={{ fontFamily: "'Space Grotesk',sans-serif" }}>Appointments ({data.appointments.length})</h2>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <TableHead cols={['Contact', 'Type', 'Date', 'Status']} />
+                  <tbody className="divide-y divide-slate-100 dark:divide-white/[0.04]">
+                    {data.appointments.map(r => (
+                      <tr key={r.id} className="hover:bg-slate-50 dark:hover:bg-white/[0.03]">
+                        <td className="px-6 py-3 text-sm text-slate-700 dark:text-slate-300">{r.email}</td>
+                        <td className="px-6 py-3 text-sm text-slate-500 dark:text-slate-400">{r.appointment_type}</td>
+                        <td className="px-6 py-3 text-sm text-slate-500 dark:text-slate-400">{formatDate(r.date)}</td>
+                        <td className="px-6 py-3"><StatusBadge status={r.status} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </GlassCard>
+          )}
+          {data.calls.length > 0 && (
+            <GlassCard>
+              <div className="border-b border-slate-200 px-6 py-4 dark:border-white/[0.07]">
+                <h2 className="text-sm font-semibold text-slate-900 dark:text-white" style={{ fontFamily: "'Space Grotesk',sans-serif" }}>Call Logs ({data.calls.length})</h2>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <TableHead cols={['Caller', 'Date', 'Duration', 'Outcome']} />
+                  <tbody className="divide-y divide-slate-100 dark:divide-white/[0.04]">
+                    {data.calls.map(r => (
+                      <tr key={r.id} className="hover:bg-slate-50 dark:hover:bg-white/[0.03]">
+                        <td className="px-6 py-3 text-sm text-slate-700 dark:text-slate-300">{r.caller_number}</td>
+                        <td className="px-6 py-3 text-sm text-slate-500 dark:text-slate-400">{formatDate(r.date)}</td>
+                        <td className="px-6 py-3 text-sm text-slate-500 dark:text-slate-400">{formatDuration(r.duration_seconds)}</td>
+                        <td className="px-6 py-3"><OutcomeBadge outcome={r.outcome} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </GlassCard>
+          )}
+          {data.appointments.length === 0 && data.calls.length === 0 && data.contacts.length === 0 && data.messages.length === 0 && (
+            <EmptyState icon={BarChart2} label="No activity in this date range" sub="Try a wider date range to find data." />
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+// ─── Audit Log Page ───────────────────────────────────────────────────────────
+
+function AuditLogPage({ user: _user }: PageProps) {
+  const [rows, setRows]         = useState<AuditRow[]>([])
+  const [loading, setLoading]   = useState(true)
+  const [tableError, setTableError] = useState(false)
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo]     = useState('')
+
+  useEffect(() => {
+    setLoading(true)
+    let q = sb.from('audit_logs').select('*').order('created_at', { ascending: false }).limit(100) as any
+    if (dateFrom) q = q.gte('created_at', `${dateFrom}T00:00:00`)
+    if (dateTo)   q = q.lte('created_at', `${dateTo}T23:59:59`)
+    q.then(({ data, error }: any) => {
+      if (error?.code === '42P01') setTableError(true)
+      else setRows((data as AuditRow[]) ?? [])
+      setLoading(false)
+    })
+  }, [dateFrom, dateTo])
+
+  const actionColor: Record<string, string> = {
+    create: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
+    update: 'bg-blue-500/10 text-blue-600 dark:text-blue-400',
+    delete: 'bg-red-500/10 text-red-600 dark:text-red-400',
+    login:  'bg-violet-500/10 text-violet-600 dark:text-violet-400',
+  }
+
+  if (tableError) return (
+    <div className="space-y-6">
+      <PageHeader title="Audit Log" subtitle="Admin activity history" />
+      <GlassCard>
+        <div className="px-6 py-12 text-center">
+          <AlertCircle className="mx-auto mb-3 h-8 w-8 text-amber-500" />
+          <h3 className="text-sm font-semibold text-slate-900 dark:text-white">audit_logs table not found</h3>
+          <p className="mx-auto mt-2 max-w-sm text-xs text-slate-400">Create it in Supabase to start tracking admin activity:</p>
+          <pre className="mx-auto mt-4 max-w-xl overflow-x-auto rounded-xl bg-slate-900 p-4 text-left text-xs text-slate-300">{`create table audit_logs (
+  id uuid primary key default gen_random_uuid(),
+  created_at timestamptz default now(),
+  user_email text not null,
+  action text not null,
+  entity text not null,
+  entity_id text,
+  details text
+);`}</pre>
+        </div>
+      </GlassCard>
+    </div>
+  )
+
+  return (
+    <div className="space-y-6">
+      <PageHeader title="Audit Log" subtitle="Track every admin action across the portal" />
+      <GlassCard>
+        <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 px-6 py-4 dark:border-white/[0.07]">
+          <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-white/[0.08] dark:bg-white/[0.04]">
+            <Calendar className="h-3.5 w-3.5 text-slate-400" />
+            <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="bg-transparent text-xs text-slate-700 outline-none dark:text-slate-300" />
+            <span className="text-slate-300 dark:text-slate-600">–</span>
+            <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="bg-transparent text-xs text-slate-700 outline-none dark:text-slate-300" />
+          </div>
+          {(dateFrom || dateTo) && <button onClick={() => { setDateFrom(''); setDateTo('') }}
+            className="rounded-xl border border-slate-200 px-3 py-2 text-xs text-slate-500 transition-colors hover:text-slate-900 dark:border-white/[0.08] dark:text-slate-400">Clear</button>}
+          <ExportButton onClick={() => exportCSV('audit_log.csv', ['Date','User','Action','Entity','ID','Details'],
+            rows.map(r => [r.created_at, r.user_email, r.action, r.entity, r.entity_id ?? '', r.details ?? '']))} />
+        </div>
+        {loading ? <TableSkeleton cols={5} /> :
+         rows.length === 0
+           ? <EmptyState icon={ClipboardList} label="No audit entries yet" sub="Admin actions will be logged here automatically." />
+           : (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <TableHead cols={['Timestamp', 'User', 'Action', 'Entity', 'Details']} />
+              <tbody className="divide-y divide-slate-100 dark:divide-white/[0.04]">
+                {rows.map(r => (
+                  <tr key={r.id} className="hover:bg-slate-50 dark:hover:bg-white/[0.03]">
+                    <td className="whitespace-nowrap px-6 py-3 text-xs text-slate-400">{formatDate(r.created_at)}</td>
+                    <td className="px-6 py-3 text-sm text-slate-700 dark:text-slate-300">{r.user_email}</td>
+                    <td className="px-6 py-3">
+                      <span className={cn('rounded-full px-2.5 py-0.5 text-xs font-medium capitalize', actionColor[r.action.toLowerCase()] ?? actionColor.update)}>{r.action}</span>
+                    </td>
+                    <td className="px-6 py-3 text-sm capitalize text-slate-500 dark:text-slate-400">{r.entity}</td>
+                    <td className="px-6 py-3 text-xs text-slate-400">{r.details ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </GlassCard>
+    </div>
+  )
+}
+
+// ─── Profile Page ─────────────────────────────────────────────────────────────
+
+function ProfilePage({ user }: PageProps) {
+  const [name, setName]     = useState(user.name ?? '')
+  const [saving, setSaving] = useState(false)
+  const [notifPrefs, setNotifPrefs] = useState<Record<string, boolean>>(() => {
+    if (typeof window === 'undefined') return { calls: true, appointments: true, messages: true, contacts: true }
+    return {
+      calls:        localStorage.getItem('notif-calls')        !== 'false',
+      appointments: localStorage.getItem('notif-appointments') !== 'false',
+      messages:     localStorage.getItem('notif-messages')     !== 'false',
+      contacts:     localStorage.getItem('notif-contacts')     !== 'false',
+    }
+  })
+
+  async function saveName() {
+    setSaving(true)
+    const { error } = await sb.from('profiles').update({ name: name.trim() || null }).eq('id', user.id)
+    if (error) showToast('Save failed: ' + error.message, 'error')
+    else showToast('Name updated', 'success')
+    setSaving(false)
+  }
+
+  function toggleNotif(key: string) {
+    const next = !notifPrefs[key]
+    setNotifPrefs(p => ({ ...p, [key]: next }))
+    localStorage.setItem(`notif-${key}`, String(next))
+  }
+
+  const notifItems = [
+    { key: 'calls',        label: 'New calls',        sub: 'Alert when DrizzleBot logs an inbound call',    icon: <Phone className="h-4 w-4" /> },
+    { key: 'appointments', label: 'New appointments', sub: 'Alert when a booking is confirmed',             icon: <CalendarDays className="h-4 w-4" /> },
+    { key: 'messages',     label: 'New messages',     sub: 'Alert on inbound message activity',             icon: <MessageSquare className="h-4 w-4" /> },
+    { key: 'contacts',     label: 'New contacts',     sub: 'Alert when a new contact is created',           icon: <Users className="h-4 w-4" /> },
+  ]
+
+  return (
+    <div className="mx-auto max-w-2xl space-y-6">
+      <PageHeader title="Profile" subtitle="Manage your account and notification preferences" />
+      <GlassCard>
+        <div className="space-y-5 p-6">
+          <h2 className="text-sm font-semibold text-slate-900 dark:text-white" style={{ fontFamily: "'Space Grotesk',sans-serif" }}>Account</h2>
+          <div className="flex items-center gap-4">
+            <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-500 to-purple-700 text-xl font-bold text-white">
+              {(user.name || user.email).charAt(0).toUpperCase()}
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-slate-900 dark:text-white">{user.email}</p>
+              <p className="mt-0.5 text-xs capitalize text-slate-400">{user.role}</p>
+            </div>
+          </div>
+          <div>
+            <label className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">Display name</label>
+            <div className="mt-1 flex gap-2">
+              <input value={name} onChange={e => setName(e.target.value)} placeholder="Your name"
+                className="flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700 outline-none transition-colors focus:border-violet-400 focus:ring-2 focus:ring-violet-400/20 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-slate-300 dark:focus:border-violet-500" />
+              <button onClick={saveName} disabled={saving}
+                className="flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-500/20 transition-colors hover:bg-violet-500 disabled:opacity-50">
+                {saving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}Save
+              </button>
+            </div>
+          </div>
+        </div>
+      </GlassCard>
+      <GlassCard>
+        <div className="p-6">
+          <h2 className="mb-1 text-sm font-semibold text-slate-900 dark:text-white" style={{ fontFamily: "'Space Grotesk',sans-serif" }}>Notification preferences</h2>
+          <p className="mb-4 text-xs text-slate-400">Choose which real-time alerts appear in this browser session.</p>
+          <div className="space-y-1">
+            {notifItems.map(item => (
+              <div key={item.key} className="flex items-center justify-between rounded-xl px-4 py-3.5 transition-colors hover:bg-slate-50 dark:hover:bg-white/[0.03]">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-violet-500/10 text-violet-600 dark:text-violet-400">{item.icon}</div>
+                  <div>
+                    <p className="text-sm font-medium text-slate-700 dark:text-slate-300">{item.label}</p>
+                    <p className="text-xs text-slate-400">{item.sub}</p>
+                  </div>
+                </div>
+                <button onClick={() => toggleNotif(item.key)}
+                  className={cn('relative h-6 w-11 rounded-full transition-colors duration-200', notifPrefs[item.key] ? 'bg-violet-600' : 'bg-slate-200 dark:bg-white/[0.12]')}>
+                  <span className={cn('absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200', notifPrefs[item.key] ? 'translate-x-5' : 'translate-x-0.5')} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      </GlassCard>
     </div>
   )
 }
@@ -2466,9 +3092,11 @@ export default function DrizzleBotDashboard() {
     return () => { sb.removeChannel(channel) }
   }, [user])
 
+  const [mobileOpen, setMobileOpen] = useState(false)
+
   const handleSignOut = async () => { await sb.auth.signOut(); setUser(null) }
   const unreadCount = notifications.filter(n => !n.read).length
-  const shift = sidebarCollapsed ? 'ml-[64px]' : 'ml-64'
+  const shift = sidebarCollapsed ? 'md:ml-[64px]' : 'md:ml-64'
 
   if (authLoading) {
     return (
@@ -2496,12 +3124,17 @@ export default function DrizzleBotDashboard() {
       <Sidebar user={user} clients={clients} activePage={page} activeClientId={activeClientId}
         onNavigate={setPage} onClientChange={setActiveClientId} onSignOut={handleSignOut}
         dark={dark} onToggleDark={() => setDark(d => !d)}
-        collapsed={sidebarCollapsed} onToggleCollapse={() => setSidebarCollapsed(c => !c)} />
+        collapsed={sidebarCollapsed} onToggleCollapse={() => setSidebarCollapsed(c => !c)}
+        mobileOpen={mobileOpen} onCloseMobile={() => setMobileOpen(false)} />
 
       <div className={cn('flex min-h-screen flex-col transition-[margin] duration-300', shift)}>
-        <header className="sticky top-0 z-30 flex h-[60px] items-center gap-4 border-b border-slate-200 bg-white/90 px-6 backdrop-blur-md dark:border-white/[0.07] dark:bg-[#0a0d14]/90">
+        <header className="sticky top-0 z-30 flex h-[60px] items-center gap-4 border-b border-slate-200 bg-white/90 px-4 backdrop-blur-md dark:border-white/[0.07] dark:bg-[#0a0d14]/90 md:px-6">
+          <button onClick={() => setMobileOpen(true)}
+            className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 shadow-sm transition-colors hover:bg-slate-50 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-slate-400 md:hidden">
+            <Menu className="h-4 w-4" />
+          </button>
           <div className="flex-1">
-            <GlobalSearch clientId={activeClientId ?? user.client_id} isAdmin={user.role === 'admin'} />
+            <GlobalSearch clientId={activeClientId ?? user.client_id} isAdmin={user.role === 'admin'} onNavigate={setPage} />
           </div>
           <div ref={notifRef} className="relative">
             <button onClick={() => setNotifOpen(v => !v)}
@@ -2517,14 +3150,17 @@ export default function DrizzleBotDashboard() {
         </header>
 
         <main className="flex-1 p-6">
-          {page === 'overview'     && <OverviewPage     user={user} activeClientId={activeClientId} />}
+          {page === 'overview'     && <OverviewPage     user={user} activeClientId={activeClientId} onNavigate={setPage} />}
           {page === 'appointments' && <AppointmentsPage user={user} activeClientId={activeClientId} />}
           {page === 'calendar'     && <CalendarPage     user={user} activeClientId={activeClientId} />}
           {page === 'calls'        && <CallLogsPage     user={user} activeClientId={activeClientId} />}
           {page === 'contacts'     && <ContactsPage     user={user} activeClientId={activeClientId} />}
           {page === 'messages'     && <MessagesPage     user={user} activeClientId={activeClientId} />}
+          {page === 'reports'  && <ReportsPage  user={user} activeClientId={activeClientId} />}
+          {page === 'profile'  && <ProfilePage  user={user} activeClientId={activeClientId} />}
           {page === 'users'    && user.role === 'admin' && <UserManagementPage user={user} activeClientId={activeClientId} />}
-          {page === 'controls' && user.role === 'admin' && <ControlsPage user={user} activeClientId={activeClientId} />}
+          {page === 'controls' && user.role === 'admin' && <ControlsPage      user={user} activeClientId={activeClientId} />}
+          {page === 'audit'    && user.role === 'admin' && <AuditLogPage       user={user} activeClientId={activeClientId} />}
         </main>
       </div>
       <ToastContainer />
