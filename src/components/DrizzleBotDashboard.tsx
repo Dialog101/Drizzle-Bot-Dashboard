@@ -1490,24 +1490,26 @@ function ContactProfileDrawer({ contact, onClose, onSaved }: {
     setName(contact.name ?? '')
     setStatus(contact.status ?? 'active')
     setTab('appointments')
+    setAppts([]); setCallLog([]); setMsgs([])
     setHistLoading(true)
     const phone = contact.phone_number ?? contact.phone ?? ''
     const email = contact.email ?? ''
-    const apptQ = email && phone
-      ? sb.from('appointments').select('*').or(`email.eq.${email},contact_phone.eq.${phone}`)
-      : email
-        ? sb.from('appointments').select('*').eq('email', email)
-        : sb.from('appointments').select('*').eq('contact_phone', phone)
+    let apptQ = sb.from('appointments').select('*').is('deleted_at', null)
+    if (email && phone) apptQ = apptQ.or(`email.eq."${email}",contact_phone.eq."${phone}"`) as any
+    else if (email)     apptQ = apptQ.eq('email', email) as any
+    else if (phone)     apptQ = apptQ.eq('contact_phone', phone) as any
     Promise.all([
       apptQ.order('date', { ascending: false }).limit(20),
       phone ? sb.from('calls').select('*').eq('caller_number', phone).order('date', { ascending: false }).limit(20) : Promise.resolve({ data: [] }),
       phone ? sb.from('messages').select('*').eq('sender_phone', phone).order('created_at', { ascending: false }).limit(20) : Promise.resolve({ data: [] }),
-    ]).then(([a, c, m]) => {
-      setAppts((a.data as Appointment[]) ?? [])
-      setCallLog((c.data as Call[]) ?? [])
-      setMsgs((m.data as Message[]) ?? [])
-      setHistLoading(false)
-    })
+    ])
+      .then(([a, c, m]) => {
+        setAppts((a.data as Appointment[]) ?? [])
+        setCallLog((c.data as Call[]) ?? [])
+        setMsgs((m.data as Message[]) ?? [])
+      })
+      .catch(() => showToast('Could not load contact history', 'error'))
+      .finally(() => setHistLoading(false))
   }, [contact])
 
   async function save() {
