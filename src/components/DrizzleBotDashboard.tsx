@@ -194,7 +194,8 @@ function MechawareLogo({ size = 36 }: { size?: number }) {
   )
 }
 
-function StatusBadge({ status }: { status: string }) {
+function StatusBadge({ status }: { status: string | null | undefined }) {
+  const s = status ?? 'unknown'
   const map: Record<string, string> = {
     confirmed: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 ring-emerald-500/20',
     pending:   'bg-amber-500/10   text-amber-600   dark:text-amber-400   ring-amber-500/20',
@@ -208,23 +209,24 @@ function StatusBadge({ status }: { status: string }) {
     active: 'bg-emerald-500', inactive: 'bg-slate-400', lead: 'bg-blue-500',
   }
   return (
-    <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ring-1', map[status] ?? 'bg-slate-500/10 text-slate-600 dark:text-slate-400 ring-slate-500/20')}>
-      <span className={cn('h-1.5 w-1.5 rounded-full', dot[status] ?? 'bg-slate-400')} />
-      {status.charAt(0).toUpperCase() + status.slice(1)}
+    <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ring-1', map[s] ?? 'bg-slate-500/10 text-slate-600 dark:text-slate-400 ring-slate-500/20')}>
+      <span className={cn('h-1.5 w-1.5 rounded-full', dot[s] ?? 'bg-slate-400')} />
+      {s.charAt(0).toUpperCase() + s.slice(1)}
     </span>
   )
 }
 
-function OutcomeBadge({ outcome }: { outcome: string }) {
+function OutcomeBadge({ outcome }: { outcome: string | null | undefined }) {
+  const o = outcome ?? 'unknown'
   const map: Record<string, { cls: string; icon: React.ReactNode }> = {
     completed: { cls: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 ring-emerald-500/20', icon: <CheckCircle2 className="h-3 w-3" /> },
     missed:    { cls: 'bg-red-500/10     text-red-600     dark:text-red-400     ring-red-500/20',     icon: <PhoneMissed  className="h-3 w-3" /> },
     voicemail: { cls: 'bg-amber-500/10   text-amber-600   dark:text-amber-400   ring-amber-500/20',   icon: <Mail         className="h-3 w-3" /> },
   }
-  const { cls, icon } = map[outcome] ?? map.missed
+  const { cls, icon } = map[o] ?? map.missed
   return (
     <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ring-1', cls)}>
-      {icon}{outcome.charAt(0).toUpperCase() + outcome.slice(1)}
+      {icon}{o.charAt(0).toUpperCase() + o.slice(1)}
     </span>
   )
 }
