@@ -94,8 +94,10 @@ const DAYS   = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
 
 function cn(...c: (string | undefined | false | null)[]) { return c.filter(Boolean).join(' ') }
 
-function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+function formatDate(iso: string | null | undefined) {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 function timeAgo(iso: string) {
   const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000)
@@ -104,7 +106,8 @@ function timeAgo(iso: string) {
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`
   return `${Math.floor(s / 86400)}d ago`
 }
-function formatDuration(s: number) {
+function formatDuration(s: number | null | undefined) {
+  if (!s) return '0:00'
   return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`
 }
 function exportCSV(filename: string, headers: string[], rows: string[][]) {
@@ -1659,7 +1662,7 @@ function ContactProfileDrawer({ contact, onClose, onSaved }: {
                       <MessageSquare className={cn('h-3.5 w-3.5', m.direction === 'inbound' ? 'text-blue-500 dark:text-blue-400' : 'text-violet-500 dark:text-violet-400')} />
                     </div>
                     <div className={cn('min-w-0 flex-1', m.direction === 'outbound' && 'text-right')}>
-                      <p className="text-[11px] text-slate-400">{formatDate(m.created_at)} · {m.channel.toUpperCase()}</p>
+                      <p className="text-[11px] text-slate-400">{formatDate(m.created_at)} · {(m.channel ?? 'sms').toUpperCase()}</p>
                       <p className="mt-0.5 text-sm text-slate-700 dark:text-slate-300">{m.body}</p>
                     </div>
                   </div>
