@@ -2190,13 +2190,13 @@ function UserManagementPage({ user: _user, activeClientId: _ac }: PageProps) {
   const [clients, setClients]             = useState<Client[]>([])
 
   useEffect(() => {
-    sb.from('clients').select('id,name').then(({ data }) => { if (data) setClients(data as Client[]) }).catch(() => {})
+    sb.from('clients').select('id,name').then(({ data }) => { if (data) setClients(data as Client[]) }, () => {})
     sb.from('profiles').select('*, clients(name)').order('created_at', { ascending: false })
       .then(({ data, error }) => {
         if (error?.code === '42P01') setTableError(true)
         else setProfiles((data as ProfileRow[]) ?? [])
         setLoading(false)
-      }).catch(() => setLoading(false))
+      }, () => setLoading(false))
   }, [])
 
   function roleBadge(role: string) {
@@ -2346,7 +2346,7 @@ function ControlsPage({ user, activeClientId }: PageProps) {
         const rows = (data as CalClient[]) ?? []
         setCalClients(rows)
         setCalUrls(Object.fromEntries(rows.map(r => [r.id, r.calendar_webhook_url ?? ''])))
-      }).catch(() => {})
+      }, () => {})
   }, [user.role])
 
   function addLog(msg: string, ok: boolean) {
@@ -2620,7 +2620,7 @@ function ControlsPage({ user, activeClientId }: PageProps) {
                 <p className="mt-0.5 text-xs text-slate-400">Create a new client account and configure their DrizzleBot setup</p>
               </div>
             </div>
-            <button onClick={() => { sb.from('clients').select('id,name').then(({ data }) => setOnboardClients((data as Client[]) ?? [])).catch(() => {}); setShowOnboarding(true) }}
+            <button onClick={() => { sb.from('clients').select('id,name').then(({ data }) => setOnboardClients((data as Client[]) ?? []), () => {}); setShowOnboarding(true) }}
               className="flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-500/20 transition-colors hover:bg-violet-500">
               <Rocket className="h-4 w-4" />Start onboarding
             </button>
@@ -3092,7 +3092,7 @@ export default function DrizzleBotDashboard() {
         setUser({ id: data.session.user.id, email: data.session.user.email ?? '', role: meta?.role ?? 'client', client_id: meta?.client_id ?? null, name: meta?.full_name ?? '' })
       }
       setAuthLoading(false)
-    }).catch(() => setAuthLoading(false))
+    }, () => setAuthLoading(false))
     const { data: { subscription } } = sb.auth.onAuthStateChange((_, session) => { if (!session) setUser(null) })
     return () => subscription.unsubscribe()
   }, [])
@@ -3101,7 +3101,7 @@ export default function DrizzleBotDashboard() {
     if (!user || user.role !== 'admin') return
     sb.from('clients').select('id,name,status,last_active').then(({ data }) => {
       if (data) setClients(data as Client[])
-    }).catch(() => {})
+    }, () => {})
   }, [user])
 
   useEffect(() => {
