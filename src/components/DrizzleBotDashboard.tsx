@@ -534,16 +534,26 @@ function Sidebar({ user, clients, clientsDiag = [], activePage, activeClientId, 
   async function quickCreate() {
     if (!quickName.trim() || quickBusy) return
     setQuickBusy(true)
-    const { data, error } = await sb.from('clients').insert({ name: quickName.trim() }).select('id,name').single()
+    const trimmed = quickName.trim()
+    // Try Supabase first
+    const { data, error } = await sb.from('clients').insert({ name: trimmed }).select('id,name').single()
     setQuickBusy(false)
-    if (error) { showToast('Create failed: ' + error.message, 'error'); return }
-    if (data) {
-      onClientCreated?.(data as Client)
-      onClientChange(data.id)
-      setQuickName('')
-      setClientDropOpen(false)
-      showToast(`Client "${data.name}" created`, 'success')
+    let created: Client
+    if (error || !data) {
+      // Fallback: localStorage so the admin can keep working without RLS access
+      created = { id: 'local-' + Math.random().toString(36).slice(2, 10), name: trimmed }
+      const stored = JSON.parse(localStorage.getItem('local-clients') || '[]') as Client[]
+      stored.push(created)
+      localStorage.setItem('local-clients', JSON.stringify(stored))
+      showToast(`Client "${trimmed}" added locally (Supabase: ${error?.message || 'no row returned'})`, 'info')
+    } else {
+      created = data as Client
+      showToast(`Client "${created.name}" created`, 'success')
     }
+    onClientCreated?.(created)
+    onClientChange(created.id)
+    setQuickName('')
+    setClientDropOpen(false)
   }
   const visibleNav = NAV_ITEMS.filter(n => {
     if (n.adminOnly && user.role !== 'admin') return false
@@ -626,7 +636,25 @@ function Sidebar({ user, clients, clientsDiag = [], activePage, activeClientId, 
                     className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-violet-600 px-3 py-2 text-[11px] font-medium text-white transition-colors hover:bg-violet-500 disabled:opacity-50"
                   >
                     {quickBusy ? <RefreshCw className="h-3 w-3 animate-spin" /> : <UserPlus className="h-3 w-3" />}
-                    {quickBusy ? 'Creating…' : 'Create client'}
+                    {quickBusy ? 'Creating…' : 'Add client'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      const seeds = ['magnussscad1@gmail.com', 'adriansmagnussscadrinieks@gmail.com']
+                      const stored = JSON.parse(localStorage.getItem('local-clients') || '[]') as Client[]
+                      for (const email of seeds) {
+                        if (!stored.some(c => c.name === email)) {
+                          const c: Client = { id: 'local-' + Math.random().toString(36).slice(2, 10), name: email }
+                          stored.push(c); onClientCreated?.(c)
+                        }
+                      }
+                      localStorage.setItem('local-clients', JSON.stringify(stored))
+                      showToast('Test clients added', 'success')
+                      setClientDropOpen(false)
+                    }}
+                    className="w-full rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-[10px] font-medium text-violet-700 transition-colors hover:bg-violet-100 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-300 dark:hover:bg-violet-500/20"
+                  >
+                    + Add 2 test clients
                   </button>
                   <button
                     onClick={() => setShowDiag(v => !v)}
@@ -3284,6 +3312,13 @@ export default function DrizzleBotDashboard() {
         const key = user.client_id ?? user.id
         if (!merged.has(key)) merged.set(key, { id: key, name: user.name || user.email || key })
       }
+
+      // Strategy 5: load any clients the admin added locally (works without RLS)
+      try {
+        const local = JSON.parse(localStorage.getItem('local-clients') || '[]') as Client[]
+        diag.push({ strategy: 'localStorage', rows: local.length })
+        for (const c of local) if (!merged.has(c.id)) merged.set(c.id, c)
+      } catch { /* ignore */ }
 
       const all = Array.from(merged.values())
       diag.push({ strategy: 'merged total', rows: all.length })
