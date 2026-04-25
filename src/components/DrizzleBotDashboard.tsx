@@ -3156,9 +3156,16 @@ export default function DrizzleBotDashboard() {
 
   useEffect(() => {
     if (!user || user.role !== 'admin') return
-    sb.from('clients').select('id,name,status,last_active').then(({ data }) => {
-      if (data) setClients(data as Client[])
-    }, () => {})
+    sb.from('clients').select('id,name,status,last_active')
+      .then(({ data, error }) => {
+        if (!error && data) { setClients(data as Client[]); return }
+        // status / last_active columns may not exist — retry with safe minimum
+        sb.from('clients').select('id,name')
+          .then(({ data: d, error: e }) => {
+            if (d) setClients(d as Client[])
+            else if (e) showToast('Could not load clients: ' + e.message, 'error')
+          }, () => showToast('Could not load clients', 'error'))
+      }, () => showToast('Could not load clients', 'error'))
   }, [user])
 
   useEffect(() => {
