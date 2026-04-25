@@ -6,27 +6,10 @@ import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Sun, Moon } from "lucide-react";
-import { createClient } from "@supabase/supabase-js";
 import * as THREE from "three";
-
-// ─── Supabase ─────────────────────────────────────────────────────────────────
-
-const sb = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL ?? "https://omrcddyrpbjsnvqwpsjq.supabase.co",
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "sb_publishable_3zfHtNM_g3sIym0Gzgyj9A_MLfdTkaa"
-);
+import { sb, type AppUser, type Role } from "@/lib/supabase";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-
-type Role = "admin" | "client";
-
-interface AppUser {
-  id: string;
-  email: string;
-  role: Role;
-  client_id: string | null;
-  name: string;
-}
 
 interface SignInPageProps {
   className?: string;
@@ -581,6 +564,7 @@ export const SignInPage = ({ className, onLogin, dark, onToggleDark }: SignInPag
                     </motion.button>
                     <motion.button
                       disabled={!code.every(d => d !== "") || submitting}
+                      onClick={() => { if (code.every(d => d !== '') && !submitting) triggerVerify(code) }}
                       className={cn(
                         "flex-1 rounded-full py-3 font-medium transition-all duration-300 border",
                         code.every(d => d !== "") && !submitting ? contActive : contInactive

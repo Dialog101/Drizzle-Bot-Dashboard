@@ -1,9 +1,9 @@
 'use client'
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { createClient } from '@supabase/supabase-js'
 import { SignInPage } from '@/components/ui/sign-in-flow-1'
-import { Area, AreaChart, ResponsiveContainer, Tooltip } from 'recharts'
+import { sb, type AppUser } from '@/lib/supabase'
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import {
   LayoutDashboard, CalendarDays, Calendar, Phone, Users, MessageSquare,
   Settings2, Bell, Search, LogOut, ChevronDown, Moon, Sun, TrendingUp,
@@ -14,19 +14,9 @@ import {
   BarChart2, ClipboardList, User2, PlayCircle, Rocket,
 } from 'lucide-react'
 
-// ─── Supabase ─────────────────────────────────────────────────────────────────
-
-const sb = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'https://omrcddyrpbjsnvqwpsjq.supabase.co',
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? 'sb_publishable_3zfHtNM_g3sIym0Gzgyj9A_MLfdTkaa',
-)
-
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type Page = 'overview' | 'appointments' | 'calendar' | 'calls' | 'contacts' | 'messages' | 'controls' | 'users' | 'reports' | 'audit' | 'profile'
-type Role = 'admin' | 'client'
-
-interface AppUser { id: string; email: string; role: Role; client_id: string | null; name: string }
 interface NavEntry { id: Page; label: string; Icon: React.ComponentType<{ className?: string }>; adminOnly?: boolean; clientOnly?: boolean; dividerBefore?: boolean }
 interface Client { id: string; name: string; status?: string; last_active?: string }
 
@@ -59,7 +49,7 @@ interface ProfileRow {
   clients?: { name: string } | null
 }
 interface OverviewStats { todayAppointments: number; totalCalls: number; totalContacts: number; totalMessages: number }
-interface Notification { id: string; type: 'call' | 'appointment' | 'message'; text: string; timestamp: string; read: boolean }
+interface Notification { id: string; type: 'call' | 'appointment' | 'message' | 'contact'; text: string; timestamp: string; read: boolean }
 interface ToastItem { id: string; msg: string; type: 'success' | 'error' | 'info' }
 
 type PageProps = { user: AppUser; activeClientId: string | null }
@@ -408,8 +398,8 @@ function NotificationsPanel({ notifications, onClose, onMarkRead, onMarkAllRead,
   onMarkAllRead: () => void
   onClear: () => void
 }) {
-  const typeIcon = { call: <Phone className="h-3.5 w-3.5" />, appointment: <CalendarDays className="h-3.5 w-3.5" />, message: <MessageSquare className="h-3.5 w-3.5" /> }
-  const typeColor = { call: 'bg-blue-500/20 text-blue-600 dark:text-blue-400', appointment: 'bg-violet-500/20 text-violet-600 dark:text-violet-400', message: 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400' }
+  const typeIcon = { call: <Phone className="h-3.5 w-3.5" />, appointment: <CalendarDays className="h-3.5 w-3.5" />, message: <MessageSquare className="h-3.5 w-3.5" />, contact: <Users className="h-3.5 w-3.5" /> }
+  const typeColor = { call: 'bg-blue-500/20 text-blue-600 dark:text-blue-400', appointment: 'bg-violet-500/20 text-violet-600 dark:text-violet-400', message: 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400', contact: 'bg-amber-500/20 text-amber-600 dark:text-amber-400' }
   const unread = notifications.filter(n => !n.read).length
   return (
     <div className="absolute right-0 top-12 z-50 w-80 rounded-2xl border border-slate-200 bg-white shadow-xl shadow-slate-200/60 dark:border-white/10 dark:bg-slate-950/95 dark:shadow-black/50 dark:backdrop-blur-xl">
@@ -692,6 +682,18 @@ function OverviewPage({ user, activeClientId, onNavigate }: PageProps & { onNavi
   const [appointments, setAppointments] = useState<Appointment[]>([])
   const [apptLoading, setApptLoading] = useState(true)
   const [selectedAppt, setSelectedAppt] = useState<Appointment | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; label: string } | null>(null)
+  const [deleteBusy, setDeleteBusy] = useState(false)
+
+  async function confirmDelete() {
+    if (!deleteTarget) return
+    setDeleteBusy(true)
+    const { error } = await sb.from('appointments').update({ deleted_at: new Date().toISOString() }).eq('id', deleteTarget.id)
+    if (error) { showToast('Delete failed: ' + error.message, 'error') }
+    else { setAppointments(r => r.filter(x => x.id !== deleteTarget.id)); showToast('Appointment deleted', 'success') }
+    setDeleteBusy(false)
+    setDeleteTarget(null)
+  }
   const [sparkData, setSparkData] = useState<Record<string, { value: number }[]>>({
     appointments: Array.from({ length: 15 }, () => ({ value: 0 })),
     calls: Array.from({ length: 15 }, () => ({ value: 0 })),
@@ -750,8 +752,12 @@ function OverviewPage({ user, activeClientId, onNavigate }: PageProps & { onNavi
 
   useEffect(() => {
     loadData()
-    const timer = setInterval(loadData, 60000)
-    return () => clearInterval(timer)
+    const timer = setInterval(() => {
+      if (!document.hidden) loadData()
+    }, 60000)
+    const onVisible = () => { if (!document.hidden) loadData() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', onVisible) }
   }, [loadData])
 
   const cards = [
@@ -799,11 +805,12 @@ function OverviewPage({ user, activeClientId, onNavigate }: PageProps & { onNavi
           </div>
         )}
       </GlassCard>
+      <DeleteModal target={deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={confirmDelete} busy={deleteBusy} />
       <AppointmentDrawer
         appt={selectedAppt}
         onClose={() => setSelectedAppt(null)}
         onSaved={updated => setAppointments(rs => rs.map(r => r.id === updated.id ? updated : r))}
-        onDelete={() => setSelectedAppt(null)}
+        onDelete={(id, label) => { setSelectedAppt(null); setDeleteTarget({ id, label }) }}
       />
     </div>
   )
@@ -1712,7 +1719,10 @@ function ContactsPage({ user, activeClientId }: PageProps) {
       if (isInitial) setLoading(true); else setLoadingMore(true)
       let q = addFilter(sb.from('contacts').select('*').order('name').limit(limit + 1))
       if (status !== 'all') q = q.eq('status', status)
-      if (search) q = q.or(`name.ilike.%${search}%,email.ilike.%${search}%,phone_number.ilike.%${search}%`)
+      if (search) {
+        const s = search.replace(/%/g, '\\%').replace(/_/g, '\\_')
+        q = q.or(`name.ilike.%${s}%,email.ilike.%${s}%,phone_number.ilike.%${s}%`)
+      }
       q.then(({ data }: any) => {
         const fetched = (data as Contact[]) ?? []
         setHasMore(fetched.length > limit)
@@ -1839,6 +1849,9 @@ function MessagesPage({ user, activeClientId }: PageProps) {
       }))
       .sort((a, b) => new Date(b.latest.created_at).getTime() - new Date(a.latest.created_at).getTime())
   }, [rows])
+
+  // Reset thread when client changes
+  useEffect(() => { setSelectedThread(null) }, [activeClientId])
 
   // Auto-select first thread
   useEffect(() => {
@@ -2307,7 +2320,7 @@ type LogEntry = { time: string; msg: string; ok: boolean }
 
 const BIZ_DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']
 
-function ControlsPage({ user, activeClientId }: PageProps) {
+function ControlsPage({ user, activeClientId, onClientCreated }: PageProps & { onClientCreated?: (c: Client) => void }) {
   const [paused, setPaused]       = useState(false)
   const [actionLog, setActionLog] = useState<LogEntry[]>([])
   const [testPhone, setTestPhone] = useState('')
@@ -2630,7 +2643,7 @@ function ControlsPage({ user, activeClientId }: PageProps) {
       </div>
       {showOnboarding && (
         <OnboardingModal clients={onboardClients} onClose={() => setShowOnboarding(false)}
-          onCreated={c => { setOnboardClients(cs => [...cs, c]); setShowOnboarding(false) }} />
+          onCreated={c => { setOnboardClients(cs => [...cs, c]); onClientCreated?.(c); setShowOnboarding(false) }} />
       )}
     </div>
   )
@@ -2766,6 +2779,22 @@ function ReportsPage({ user, activeClientId }: PageProps) {
 
   useEffect(() => { run() }, [run])
 
+  const chartData = useMemo(() => {
+    if (!data || !dateFrom || !dateTo) return []
+    const start = new Date(dateFrom), end = new Date(dateTo)
+    const days: { label: string; Appointments: number; Calls: number; Messages: number }[] = []
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      const ds = d.toISOString().slice(0, 10)
+      days.push({
+        label: new Date(ds + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        Appointments: data.appointments.filter(a => a.date?.slice(0, 10) === ds).length,
+        Calls:        data.calls.filter(c => c.date?.slice(0, 10) === ds).length,
+        Messages:     data.messages.filter(m => m.created_at?.slice(0, 10) === ds).length,
+      })
+    }
+    return days
+  }, [data, dateFrom, dateTo])
+
   const summary = data ? [
     { label: 'Appointments', value: data.appointments.length, icon: <CalendarDays className="h-5 w-5" />, color: '#7c3aed',
       breakdown: { Confirmed: data.appointments.filter(a => a.status === 'confirmed').length, Pending: data.appointments.filter(a => a.status === 'pending').length, Cancelled: data.appointments.filter(a => a.status === 'cancelled').length } },
@@ -2831,6 +2860,34 @@ function ReportsPage({ user, activeClientId }: PageProps) {
               </div>
             ))}
           </div>
+          {chartData.length > 0 && (
+            <GlassCard>
+              <div className="border-b border-slate-200 px-6 py-4 dark:border-white/[0.07]">
+                <h2 className="text-sm font-semibold text-slate-900 dark:text-white" style={{ fontFamily: "'Space Grotesk',sans-serif" }}>Daily Activity</h2>
+                <p className="text-xs text-slate-400 dark:text-slate-500">Appointments, calls and messages per day</p>
+              </div>
+              <div className="px-2 py-6" style={{ height: 260 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={chartData} margin={{ top: 4, right: 16, left: -10, bottom: 0 }} barSize={chartData.length > 14 ? 6 : 12}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.15)" vertical={false} />
+                    <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#94a3b8' }} tickLine={false} axisLine={false}
+                      interval={chartData.length > 14 ? Math.floor(chartData.length / 7) : 0} />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: '#94a3b8' }} tickLine={false} axisLine={false} />
+                    <Tooltip
+                      contentStyle={{ background: 'rgba(15,23,42,0.92)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 10, fontSize: 12 }}
+                      labelStyle={{ color: '#e2e8f0', marginBottom: 4 }}
+                      itemStyle={{ color: '#cbd5e1' }}
+                      cursor={{ fill: 'rgba(139,92,246,0.07)' }}
+                    />
+                    <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11, paddingTop: 8 }} />
+                    <Bar dataKey="Appointments" fill="#7c3aed" radius={[3, 3, 0, 0]} />
+                    <Bar dataKey="Calls"        fill="#2563eb" radius={[3, 3, 0, 0]} />
+                    <Bar dataKey="Messages"     fill="#d97706" radius={[3, 3, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </GlassCard>
+          )}
           {data.appointments.length > 0 && (
             <GlassCard>
               <div className="border-b border-slate-200 px-6 py-4 dark:border-white/[0.07]">
@@ -3125,7 +3182,7 @@ export default function DrizzleBotDashboard() {
         push({ id: String(Date.now()), type: 'message', text: `New message from ${r.sender_phone || r.sender_name || 'Unknown'} via ${r.channel || 'SMS'}`, timestamp: new Date().toISOString(), read: false })
       })
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'contacts' }, ({ new: r }: any) => {
-        push({ id: String(Date.now()), type: 'message', text: `New contact: ${r.name || r.phone_number || 'Unknown'}`, timestamp: new Date().toISOString(), read: false })
+        push({ id: String(Date.now()), type: 'contact', text: `New contact: ${r.name || r.phone_number || 'Unknown'}`, timestamp: new Date().toISOString(), read: false })
       })
       .subscribe()
     return () => { sb.removeChannel(channel) }
@@ -3198,7 +3255,7 @@ export default function DrizzleBotDashboard() {
           {page === 'reports'  && <ReportsPage  user={user} activeClientId={activeClientId} />}
           {page === 'profile'  && <ProfilePage  user={user} activeClientId={activeClientId} />}
           {page === 'users'    && user.role === 'admin' && <UserManagementPage user={user} activeClientId={activeClientId} />}
-          {page === 'controls' && user.role === 'admin' && <ControlsPage      user={user} activeClientId={activeClientId} />}
+          {page === 'controls' && user.role === 'admin' && <ControlsPage      user={user} activeClientId={activeClientId} onClientCreated={c => setClients(cs => [...cs, c])} />}
           {page === 'audit'    && user.role === 'admin' && <AuditLogPage       user={user} activeClientId={activeClientId} />}
         </main>
       </div>
