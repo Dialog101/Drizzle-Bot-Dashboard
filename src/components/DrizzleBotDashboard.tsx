@@ -3192,8 +3192,7 @@ export default function DrizzleBotDashboard() {
         const nameMap: Record<string, string> = {}
         await Promise.all(ids.map(id =>
           sb.from('clients').select('id,name').eq('id', id).single()
-            .then(({ data }) => { if (data) nameMap[id] = (data as any).name })
-            .catch(() => {})
+            .then(({ data }) => { if (data) nameMap[id] = (data as any).name }, () => {})
         ))
         setClients(ids.map(id => ({ id, name: nameMap[id] || `Client ${String(id).slice(0, 8)}` })))
         return
