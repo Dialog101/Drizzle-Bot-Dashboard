@@ -514,15 +514,34 @@ function GlobalSearch({ clientId, isAdmin: _isAdmin, onNavigate }: { clientId: s
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 
-function Sidebar({ user, clients, activePage, activeClientId, onNavigate, onClientChange, onSignOut, onToggleDark, dark, collapsed, onToggleCollapse, mobileOpen = false, onCloseMobile = () => {} }: {
+function Sidebar({ user, clients, activePage, activeClientId, onNavigate, onClientChange, onClientCreated, onSignOut, onToggleDark, dark, collapsed, onToggleCollapse, mobileOpen = false, onCloseMobile = () => {} }: {
   user: AppUser; clients: Client[]; activePage: Page; activeClientId: string | null
-  onNavigate: (p: Page) => void; onClientChange: (id: string | null) => void; onSignOut: () => void
+  onNavigate: (p: Page) => void; onClientChange: (id: string | null) => void
+  onClientCreated?: (c: Client) => void
+  onSignOut: () => void
   onToggleDark: () => void; dark: boolean; collapsed: boolean; onToggleCollapse: () => void
   mobileOpen?: boolean; onCloseMobile?: () => void
 }) {
   const [clientDropOpen, setClientDropOpen] = useState(false)
   const [clientPending, setClientPending] = useState<Record<string, number>>({})
+  const [quickName, setQuickName] = useState('')
+  const [quickBusy, setQuickBusy] = useState(false)
   const activeClient = clients.find(c => c.id === activeClientId)
+
+  async function quickCreate() {
+    if (!quickName.trim() || quickBusy) return
+    setQuickBusy(true)
+    const { data, error } = await sb.from('clients').insert({ name: quickName.trim() }).select('id,name').single()
+    setQuickBusy(false)
+    if (error) { showToast('Create failed: ' + error.message, 'error'); return }
+    if (data) {
+      onClientCreated?.(data as Client)
+      onClientChange(data.id)
+      setQuickName('')
+      setClientDropOpen(false)
+      showToast(`Client "${data.name}" created`, 'success')
+    }
+  }
   const visibleNav = NAV_ITEMS.filter(n => {
     if (n.adminOnly && user.role !== 'admin') return false
     if (n.clientOnly && user.role === 'admin') return false
@@ -587,11 +606,30 @@ function Sidebar({ user, clients, activePage, activeClientId, onNavigate, onClie
                 {activeClientId === null && <div className="ml-auto h-1.5 w-1.5 rounded-full bg-violet-500" />}
               </button>
               {clients.length === 0 ? (
-                <div className="px-3 py-3 text-center">
-                  <p className="text-xs text-slate-400">No clients found</p>
-                  <button onClick={() => { setClientDropOpen(false); onNavigate('controls') }}
-                    className="mt-2 rounded-lg bg-violet-600 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-violet-500">
-                    + Onboard first client
+                <div className="space-y-2 px-3 py-3">
+                  <p className="text-center text-[11px] font-medium text-slate-500 dark:text-slate-400">Add your first client</p>
+                  <input
+                    type="text"
+                    value={quickName}
+                    onChange={e => setQuickName(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') quickCreate() }}
+                    placeholder="Business name"
+                    disabled={quickBusy}
+                    className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700 placeholder-slate-400 outline-none focus:border-violet-400 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-slate-300 dark:placeholder-slate-600 dark:focus:border-violet-500"
+                  />
+                  <button
+                    onClick={quickCreate}
+                    disabled={!quickName.trim() || quickBusy}
+                    className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-violet-600 px-3 py-2 text-[11px] font-medium text-white transition-colors hover:bg-violet-500 disabled:opacity-50"
+                  >
+                    {quickBusy ? <RefreshCw className="h-3 w-3 animate-spin" /> : <UserPlus className="h-3 w-3" />}
+                    {quickBusy ? 'Creating…' : 'Create client'}
+                  </button>
+                  <button
+                    onClick={() => { setClientDropOpen(false); onNavigate('controls') }}
+                    className="w-full rounded-lg px-3 py-1.5 text-[10px] text-slate-400 transition-colors hover:text-violet-600 dark:hover:text-violet-400"
+                  >
+                    Or use full onboarding flow →
                   </button>
                 </div>
               ) :
@@ -3263,7 +3301,9 @@ export default function DrizzleBotDashboard() {
       `}</style>
 
       <Sidebar user={user} clients={clients} activePage={page} activeClientId={activeClientId}
-        onNavigate={setPage} onClientChange={setActiveClientId} onSignOut={handleSignOut}
+        onNavigate={setPage} onClientChange={setActiveClientId}
+        onClientCreated={c => setClients(cs => [...cs, c])}
+        onSignOut={handleSignOut}
         dark={dark} onToggleDark={() => setDark(d => !d)}
         collapsed={sidebarCollapsed} onToggleCollapse={() => setSidebarCollapsed(c => !c)}
         mobileOpen={mobileOpen} onCloseMobile={() => setMobileOpen(false)} />
