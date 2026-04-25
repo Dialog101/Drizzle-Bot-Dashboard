@@ -586,7 +586,15 @@ function Sidebar({ user, clients, activePage, activeClientId, onNavigate, onClie
                 <span className="font-medium">All Clients</span>
                 {activeClientId === null && <div className="ml-auto h-1.5 w-1.5 rounded-full bg-violet-500" />}
               </button>
-              {clients.length === 0 ? <p className="px-3 py-3 text-xs text-slate-400">No clients found</p> :
+              {clients.length === 0 ? (
+                <div className="px-3 py-3 text-center">
+                  <p className="text-xs text-slate-400">No clients found</p>
+                  <button onClick={() => { setClientDropOpen(false); onNavigate('controls') }}
+                    className="mt-2 rounded-lg bg-violet-600 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-violet-500">
+                    + Onboard first client
+                  </button>
+                </div>
+              ) :
                 clients.map(c => {
                   const pending = clientPending[c.id] ?? 0
                   const inactive = c.status === 'inactive'
@@ -3158,33 +3166,42 @@ export default function DrizzleBotDashboard() {
     if (!user || user.role !== 'admin') return
 
     async function loadClients() {
-      // Strategy 1: dedicated clients table (id and name are the only guaranteed columns)
-      const { data: clientRows, error: clientErr } = await sb.from('clients').select('id,name,status,last_active')
-      if (!clientErr && clientRows && clientRows.length > 0) {
-        setClients(clientRows as Client[])
-        return
-      }
+      // Strategy 1: dedicated clients table
+      const { data: c1, error: e1 } = await sb.from('clients').select('id,name,status,last_active')
+      console.log('[clients] strategy 1 — clients table:', { rows: c1?.length, error: e1?.message })
+      if (!e1 && c1 && c1.length > 0) { setClients(c1 as Client[]); return }
 
-      // Strategy 2: derive from profiles with role='client'
-      // Works even when the clients table is empty or doesn't exist yet
-      const { data: profileRows, error: profileErr } = await sb
-        .from('profiles').select('id,name,email,client_id').eq('role', 'client')
-      if (!profileErr && profileRows && profileRows.length > 0) {
+      // Strategy 2: profiles with role='client'
+      const { data: c2, error: e2 } = await sb.from('profiles').select('id,name,email,client_id').eq('role', 'client')
+      console.log('[clients] strategy 2 — profiles(role=client):', { rows: c2?.length, error: e2?.message })
+      if (!e2 && c2 && c2.length > 0) {
         const seen = new Set<string>()
         const derived: Client[] = []
-        for (const p of profileRows as any[]) {
+        for (const p of c2 as any[]) {
           const key = p.client_id ?? p.id
-          if (!seen.has(key)) {
-            seen.add(key)
-            derived.push({ id: key, name: p.name || p.email || key })
-          }
+          if (!seen.has(key)) { seen.add(key); derived.push({ id: key, name: p.name || p.email || key }) }
         }
         if (derived.length > 0) { setClients(derived); return }
       }
 
-      // Nothing found — surface the underlying error if there was one
-      if (clientErr) showToast('Could not load clients: ' + clientErr.message, 'error')
-      else if (profileErr) showToast('Could not load profiles: ' + profileErr.message, 'error')
+      // Strategy 3: pull distinct client_ids from appointments (admin can always read these)
+      const { data: c3, error: e3 } = await sb.from('appointments').select('client_id').not('client_id', 'is', null).limit(500)
+      console.log('[clients] strategy 3 — appointments client_ids:', { rows: c3?.length, error: e3?.message })
+      if (!e3 && c3 && c3.length > 0) {
+        const ids = [...new Set((c3 as any[]).map((r: any) => r.client_id).filter(Boolean))]
+        const nameMap: Record<string, string> = {}
+        await Promise.all(ids.map(id =>
+          sb.from('clients').select('id,name').eq('id', id).single()
+            .then(({ data }) => { if (data) nameMap[id] = (data as any).name })
+            .catch(() => {})
+        ))
+        setClients(ids.map(id => ({ id, name: nameMap[id] || `Client ${String(id).slice(0, 8)}` })))
+        return
+      }
+
+      console.warn('[clients] all strategies returned empty', { e1: e1?.message, e2: e2?.message, e3: e3?.message })
+      if (e1) showToast('clients table: ' + e1.message, 'error')
+      else if (e2) showToast('profiles table: ' + e2.message, 'error')
     }
 
     loadClients()
