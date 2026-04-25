@@ -3245,45 +3245,52 @@ export default function DrizzleBotDashboard() {
 
     async function loadClients() {
       const diag: { strategy: string; rows: number; error?: string }[] = []
+      const merged = new Map<string, Client>()
 
       // Strategy 1: dedicated clients table
       const { data: c1, error: e1 } = await sb.from('clients').select('id,name,status,last_active')
       diag.push({ strategy: 'clients table', rows: c1?.length ?? 0, error: e1?.message })
       console.log('[clients] strategy 1 — clients table:', { rows: c1?.length, error: e1?.message })
-      if (!e1 && c1 && c1.length > 0) { setClients(c1 as Client[]); setClientsDiag(diag); return }
+      if (!e1 && c1) for (const c of c1 as any[]) merged.set(c.id, c as Client)
 
-      // Strategy 2: profiles with role='client'
-      const { data: c2, error: e2 } = await sb.from('profiles').select('id,name,email,client_id').eq('role', 'client')
-      diag.push({ strategy: 'profiles(role=client)', rows: c2?.length ?? 0, error: e2?.message })
-      console.log('[clients] strategy 2 — profiles(role=client):', { rows: c2?.length, error: e2?.message })
-      if (!e2 && c2 && c2.length > 0) {
-        const seen = new Set<string>()
-        const derived: Client[] = []
+      // Strategy 2: ALL profiles (no role filter — test users may have role=admin or null)
+      const { data: c2, error: e2 } = await sb.from('profiles').select('id,name,email,client_id,role')
+      diag.push({ strategy: 'profiles (all roles)', rows: c2?.length ?? 0, error: e2?.message })
+      console.log('[clients] strategy 2 — profiles all:', { rows: c2?.length, error: e2?.message })
+      if (!e2 && c2) {
         for (const p of c2 as any[]) {
           const key = p.client_id ?? p.id
-          if (!seen.has(key)) { seen.add(key); derived.push({ id: key, name: p.name || p.email || key }) }
+          if (!merged.has(key)) merged.set(key, { id: key, name: p.name || p.email || key })
         }
-        if (derived.length > 0) { setClients(derived); setClientsDiag(diag); return }
       }
 
-      // Strategy 3: pull distinct client_ids from appointments
-      const { data: c3, error: e3 } = await sb.from('appointments').select('client_id').not('client_id', 'is', null).limit(500)
-      diag.push({ strategy: 'appointments.client_id', rows: c3?.length ?? 0, error: e3?.message })
-      console.log('[clients] strategy 3 — appointments client_ids:', { rows: c3?.length, error: e3?.message })
-      if (!e3 && c3 && c3.length > 0) {
-        const ids = [...new Set((c3 as any[]).map((r: any) => r.client_id).filter(Boolean))]
-        const nameMap: Record<string, string> = {}
-        await Promise.all(ids.map(id =>
-          sb.from('clients').select('id,name').eq('id', id).single()
-            .then(({ data }) => { if (data) nameMap[id] = (data as any).name }, () => {})
-        ))
-        setClients(ids.map(id => ({ id, name: nameMap[id] || `Client ${String(id).slice(0, 8)}` })))
-        setClientsDiag(diag)
-        return
+      // Strategy 3: derive from appointments — fetch email+client_id together
+      const { data: c3, error: e3 } = await sb.from('appointments').select('client_id,email').limit(500)
+      diag.push({ strategy: 'appointments.email', rows: c3?.length ?? 0, error: e3?.message })
+      console.log('[clients] strategy 3 — appointments:', { rows: c3?.length, error: e3?.message })
+      if (!e3 && c3) {
+        // Pick the most recent email per client_id
+        const byId: Record<string, string> = {}
+        for (const r of c3 as any[]) {
+          if (r.client_id && r.email && !byId[r.client_id]) byId[r.client_id] = r.email
+        }
+        for (const [id, email] of Object.entries(byId)) {
+          if (!merged.has(id)) merged.set(id, { id, name: email })
+        }
       }
 
+      // Strategy 4: include the currently-logged-in admin as a switchable client
+      if (user) {
+        const key = user.client_id ?? user.id
+        if (!merged.has(key)) merged.set(key, { id: key, name: user.name || user.email || key })
+      }
+
+      const all = Array.from(merged.values())
+      diag.push({ strategy: 'merged total', rows: all.length })
+      setClients(all)
       setClientsDiag(diag)
-      console.warn('[clients] all strategies returned empty', { e1: e1?.message, e2: e2?.message, e3: e3?.message })
+
+      if (all.length === 0) console.warn('[clients] all strategies returned empty', { e1: e1?.message, e2: e2?.message, e3: e3?.message })
     }
 
     loadClients()
