@@ -514,8 +514,10 @@ function GlobalSearch({ clientId, isAdmin: _isAdmin, onNavigate }: { clientId: s
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 
-function Sidebar({ user, clients, activePage, activeClientId, onNavigate, onClientChange, onClientCreated, onSignOut, onToggleDark, dark, collapsed, onToggleCollapse, mobileOpen = false, onCloseMobile = () => {} }: {
-  user: AppUser; clients: Client[]; activePage: Page; activeClientId: string | null
+function Sidebar({ user, clients, clientsDiag = [], activePage, activeClientId, onNavigate, onClientChange, onClientCreated, onSignOut, onToggleDark, dark, collapsed, onToggleCollapse, mobileOpen = false, onCloseMobile = () => {} }: {
+  user: AppUser; clients: Client[]
+  clientsDiag?: { strategy: string; rows: number; error?: string }[]
+  activePage: Page; activeClientId: string | null
   onNavigate: (p: Page) => void; onClientChange: (id: string | null) => void
   onClientCreated?: (c: Client) => void
   onSignOut: () => void
@@ -526,6 +528,7 @@ function Sidebar({ user, clients, activePage, activeClientId, onNavigate, onClie
   const [clientPending, setClientPending] = useState<Record<string, number>>({})
   const [quickName, setQuickName] = useState('')
   const [quickBusy, setQuickBusy] = useState(false)
+  const [showDiag, setShowDiag] = useState(false)
   const activeClient = clients.find(c => c.id === activeClientId)
 
   async function quickCreate() {
@@ -626,11 +629,47 @@ function Sidebar({ user, clients, activePage, activeClientId, onNavigate, onClie
                     {quickBusy ? 'Creating…' : 'Create client'}
                   </button>
                   <button
-                    onClick={() => { setClientDropOpen(false); onNavigate('controls') }}
+                    onClick={() => setShowDiag(v => !v)}
                     className="w-full rounded-lg px-3 py-1.5 text-[10px] text-slate-400 transition-colors hover:text-violet-600 dark:hover:text-violet-400"
                   >
-                    Or use full onboarding flow →
+                    {showDiag ? 'Hide diagnostics ▲' : 'Show diagnostics ▼'}
                   </button>
+                  {showDiag && (
+                    <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-[10px] dark:border-amber-500/20 dark:bg-amber-500/[0.06]">
+                      <div className="space-y-1">
+                        {clientsDiag.length === 0
+                          ? <p className="text-slate-500 dark:text-slate-400">Loading diagnostics…</p>
+                          : clientsDiag.map((d, i) => (
+                              <div key={i} className="flex flex-col gap-0.5">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="font-mono text-slate-600 dark:text-slate-300">{d.strategy}</span>
+                                  <span className={cn('font-mono', d.error ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400')}>
+                                    {d.rows} rows
+                                  </span>
+                                </div>
+                                {d.error && <p className="break-all font-mono text-red-600 dark:text-red-400">{d.error}</p>}
+                              </div>
+                            ))
+                        }
+                      </div>
+                      {clientsDiag.some(d => d.error?.toLowerCase().includes('row-level') || d.error?.toLowerCase().includes('permission') || d.error?.toLowerCase().includes('policy')) && (
+                        <div className="border-t border-amber-300/40 pt-2 dark:border-amber-500/20">
+                          <p className="mb-1 font-semibold text-amber-700 dark:text-amber-400">RLS likely blocking — run this in Supabase SQL editor:</p>
+                          <pre className="overflow-x-auto rounded bg-slate-900 p-2 text-[9px] text-slate-300">{`alter table clients enable row level security;
+create policy "admins read clients"
+  on clients for select
+  using (coalesce(
+    (auth.jwt()->'user_metadata'->>'role'),''
+  ) = 'admin');
+create policy "admins write clients"
+  on clients for all
+  using (coalesce(
+    (auth.jwt()->'user_metadata'->>'role'),''
+  ) = 'admin');`}</pre>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               ) :
                 clients.map(c => {
@@ -3184,6 +3223,7 @@ export default function DrizzleBotDashboard() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [clients, setClients]                 = useState<Client[]>([])
   const [activeClientId, setActiveClientId]   = useState<string | null>(null)
+  const [clientsDiag, setClientsDiag]         = useState<{ strategy: string; rows: number; error?: string }[]>([])
   const [notifOpen, setNotifOpen]             = useState(false)
   const [notifications, setNotifications]     = useState<Notification[]>([])
   const notifRef = useRef<HTMLDivElement>(null)
@@ -3204,13 +3244,17 @@ export default function DrizzleBotDashboard() {
     if (!user || user.role !== 'admin') return
 
     async function loadClients() {
+      const diag: { strategy: string; rows: number; error?: string }[] = []
+
       // Strategy 1: dedicated clients table
       const { data: c1, error: e1 } = await sb.from('clients').select('id,name,status,last_active')
+      diag.push({ strategy: 'clients table', rows: c1?.length ?? 0, error: e1?.message })
       console.log('[clients] strategy 1 — clients table:', { rows: c1?.length, error: e1?.message })
-      if (!e1 && c1 && c1.length > 0) { setClients(c1 as Client[]); return }
+      if (!e1 && c1 && c1.length > 0) { setClients(c1 as Client[]); setClientsDiag(diag); return }
 
       // Strategy 2: profiles with role='client'
       const { data: c2, error: e2 } = await sb.from('profiles').select('id,name,email,client_id').eq('role', 'client')
+      diag.push({ strategy: 'profiles(role=client)', rows: c2?.length ?? 0, error: e2?.message })
       console.log('[clients] strategy 2 — profiles(role=client):', { rows: c2?.length, error: e2?.message })
       if (!e2 && c2 && c2.length > 0) {
         const seen = new Set<string>()
@@ -3219,11 +3263,12 @@ export default function DrizzleBotDashboard() {
           const key = p.client_id ?? p.id
           if (!seen.has(key)) { seen.add(key); derived.push({ id: key, name: p.name || p.email || key }) }
         }
-        if (derived.length > 0) { setClients(derived); return }
+        if (derived.length > 0) { setClients(derived); setClientsDiag(diag); return }
       }
 
-      // Strategy 3: pull distinct client_ids from appointments (admin can always read these)
+      // Strategy 3: pull distinct client_ids from appointments
       const { data: c3, error: e3 } = await sb.from('appointments').select('client_id').not('client_id', 'is', null).limit(500)
+      diag.push({ strategy: 'appointments.client_id', rows: c3?.length ?? 0, error: e3?.message })
       console.log('[clients] strategy 3 — appointments client_ids:', { rows: c3?.length, error: e3?.message })
       if (!e3 && c3 && c3.length > 0) {
         const ids = [...new Set((c3 as any[]).map((r: any) => r.client_id).filter(Boolean))]
@@ -3233,12 +3278,12 @@ export default function DrizzleBotDashboard() {
             .then(({ data }) => { if (data) nameMap[id] = (data as any).name }, () => {})
         ))
         setClients(ids.map(id => ({ id, name: nameMap[id] || `Client ${String(id).slice(0, 8)}` })))
+        setClientsDiag(diag)
         return
       }
 
+      setClientsDiag(diag)
       console.warn('[clients] all strategies returned empty', { e1: e1?.message, e2: e2?.message, e3: e3?.message })
-      if (e1) showToast('clients table: ' + e1.message, 'error')
-      else if (e2) showToast('profiles table: ' + e2.message, 'error')
     }
 
     loadClients()
@@ -3300,7 +3345,7 @@ export default function DrizzleBotDashboard() {
         .dark input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(0.5)}
       `}</style>
 
-      <Sidebar user={user} clients={clients} activePage={page} activeClientId={activeClientId}
+      <Sidebar user={user} clients={clients} clientsDiag={clientsDiag} activePage={page} activeClientId={activeClientId}
         onNavigate={setPage} onClientChange={setActiveClientId}
         onClientCreated={c => setClients(cs => [...cs, c])}
         onSignOut={handleSignOut}
