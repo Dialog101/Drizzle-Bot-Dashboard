@@ -3156,16 +3156,38 @@ export default function DrizzleBotDashboard() {
 
   useEffect(() => {
     if (!user || user.role !== 'admin') return
-    sb.from('clients').select('id,name,status,last_active')
-      .then(({ data, error }) => {
-        if (!error && data) { setClients(data as Client[]); return }
-        // status / last_active columns may not exist — retry with safe minimum
-        sb.from('clients').select('id,name')
-          .then(({ data: d, error: e }) => {
-            if (d) setClients(d as Client[])
-            else if (e) showToast('Could not load clients: ' + e.message, 'error')
-          }, () => showToast('Could not load clients', 'error'))
-      }, () => showToast('Could not load clients', 'error'))
+
+    async function loadClients() {
+      // Strategy 1: dedicated clients table (id and name are the only guaranteed columns)
+      const { data: clientRows, error: clientErr } = await sb.from('clients').select('id,name,status,last_active')
+      if (!clientErr && clientRows && clientRows.length > 0) {
+        setClients(clientRows as Client[])
+        return
+      }
+
+      // Strategy 2: derive from profiles with role='client'
+      // Works even when the clients table is empty or doesn't exist yet
+      const { data: profileRows, error: profileErr } = await sb
+        .from('profiles').select('id,name,email,client_id').eq('role', 'client')
+      if (!profileErr && profileRows && profileRows.length > 0) {
+        const seen = new Set<string>()
+        const derived: Client[] = []
+        for (const p of profileRows as any[]) {
+          const key = p.client_id ?? p.id
+          if (!seen.has(key)) {
+            seen.add(key)
+            derived.push({ id: key, name: p.name || p.email || key })
+          }
+        }
+        if (derived.length > 0) { setClients(derived); return }
+      }
+
+      // Nothing found — surface the underlying error if there was one
+      if (clientErr) showToast('Could not load clients: ' + clientErr.message, 'error')
+      else if (profileErr) showToast('Could not load profiles: ' + profileErr.message, 'error')
+    }
+
+    loadClients()
   }, [user])
 
   useEffect(() => {
