@@ -512,67 +512,173 @@ function GlobalSearch({ clientId, isAdmin: _isAdmin, onNavigate }: { clientId: s
   )
 }
 
+// ─── Client Selector ──────────────────────────────────────────────────────────
+
+interface ClientOption { id: string; name: string; sub?: string; pending?: number }
+
+function ClientSelector({ user, activeClientId, onClientChange }: {
+  user: AppUser
+  activeClientId: string | null
+  onClientChange: (id: string | null) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [options, setOptions] = useState<ClientOption[]>([])
+  const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
+  const ref = useRef<HTMLDivElement>(null)
+
+  // Close on outside click
+  useEffect(() => {
+    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
+    document.addEventListener('mousedown', h); return () => document.removeEventListener('mousedown', h)
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      const merged = new Map<string, ClientOption>()
+
+      // 1. clients table
+      const { data: cRows } = await sb.from('clients').select('id,name')
+      if (cRows) for (const c of cRows as any[]) merged.set(c.id, { id: c.id, name: c.name })
+
+      // 2. ALL profiles — show every user (no role filter)
+      const { data: pRows } = await sb.from('profiles').select('id,name,email,client_id,role')
+      if (pRows) for (const p of pRows as any[]) {
+        const id = p.client_id || p.id
+        const name = p.name || p.email || id
+        const sub = p.email && p.email !== name ? p.email : (p.role || undefined)
+        if (!merged.has(id)) merged.set(id, { id, name, sub })
+      }
+
+      // 3. emails / client_ids from appointments
+      const { data: aRows } = await sb.from('appointments').select('client_id,email').limit(500)
+      if (aRows) {
+        for (const r of aRows as any[]) {
+          if (r.client_id && !merged.has(r.client_id)) {
+            merged.set(r.client_id, { id: r.client_id, name: r.email || `Client ${String(r.client_id).slice(0, 8)}`, sub: r.email })
+          }
+        }
+      }
+
+      // 4. always include the currently signed-in admin
+      const meKey = user.client_id || user.id
+      if (!merged.has(meKey)) merged.set(meKey, { id: meKey, name: user.name || user.email || meKey, sub: 'you (admin)' })
+
+      // 5. localStorage clients
+      try {
+        const local = JSON.parse(localStorage.getItem('local-clients') || '[]') as ClientOption[]
+        for (const c of local) if (!merged.has(c.id)) merged.set(c.id, { ...c, sub: c.sub || 'local' })
+      } catch { /* ignore */ }
+
+      // 6. pending appointment counts per client
+      const ids = Array.from(merged.keys())
+      await Promise.all(ids.map(id =>
+        sb.from('appointments').select('id', { count: 'exact', head: true })
+          .eq('client_id', id).eq('status', 'pending').is('deleted_at', null)
+          .then(({ count }) => { const o = merged.get(id); if (o) o.pending = count ?? 0 }, () => {})
+      ))
+
+      if (!cancelled) {
+        setOptions(Array.from(merged.values()).sort((a, b) => a.name.localeCompare(b.name)))
+        setLoading(false)
+      }
+    }
+    load()
+    return () => { cancelled = true }
+  }, [user])
+
+  const active = options.find(o => o.id === activeClientId)
+  const filtered = search.trim()
+    ? options.filter(o => o.name.toLowerCase().includes(search.toLowerCase()) || o.sub?.toLowerCase().includes(search.toLowerCase()))
+    : options
+
+  return (
+    <div ref={ref} className="relative px-3 pt-3">
+      <button onClick={() => setOpen(v => !v)}
+        className="flex w-full items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-left transition-colors hover:bg-slate-100 dark:border-white/[0.08] dark:bg-white/[0.04] dark:hover:bg-white/[0.07]">
+        <Building2 className="h-4 w-4 flex-shrink-0 text-violet-500" />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium text-slate-700 dark:text-slate-200">
+            {activeClientId === null ? 'All Clients' : (active?.name ?? 'Select a client')}
+          </p>
+          <p className="truncate text-[10px] text-slate-400">
+            {loading ? 'Loading…' : `${options.length} client${options.length === 1 ? '' : 's'} available`}
+          </p>
+        </div>
+        <ChevronDown className={cn('h-4 w-4 flex-shrink-0 text-slate-400 transition-transform duration-200', open && 'rotate-180')} />
+      </button>
+
+      {open && (
+        <div className="absolute left-3 right-3 top-full z-50 mt-1 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl shadow-slate-200/60 dark:border-white/[0.08] dark:bg-slate-900 dark:shadow-black/40">
+          {/* Search */}
+          <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-2 dark:border-white/[0.05]">
+            <Search className="h-3.5 w-3.5 flex-shrink-0 text-slate-400" />
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search clients…"
+              className="flex-1 bg-transparent text-xs text-slate-700 placeholder-slate-400 outline-none dark:text-slate-300 dark:placeholder-slate-600" />
+          </div>
+
+          <div className="max-h-[360px] overflow-y-auto py-1">
+            {/* All clients */}
+            <button onClick={() => { onClientChange(null); setOpen(false) }}
+              className={cn('flex w-full items-center gap-2.5 px-3 py-2.5 text-sm transition-colors hover:bg-slate-50 dark:hover:bg-white/[0.05]',
+                activeClientId === null ? 'text-violet-600 dark:text-violet-400' : 'text-slate-600 dark:text-slate-400')}>
+              <Globe className="h-3.5 w-3.5 flex-shrink-0" />
+              <span className="flex-1 text-left font-medium">All Clients</span>
+              {activeClientId === null && <div className="h-1.5 w-1.5 rounded-full bg-violet-500" />}
+            </button>
+
+            <div className="my-1 border-t border-slate-100 dark:border-white/[0.04]" />
+
+            {loading ? (
+              <div className="flex items-center justify-center gap-2 px-3 py-6 text-xs text-slate-400">
+                <RefreshCw className="h-3 w-3 animate-spin" /> Loading clients…
+              </div>
+            ) : filtered.length === 0 ? (
+              <p className="px-3 py-4 text-center text-xs text-slate-400">
+                {search ? 'No matches' : 'No clients yet'}
+              </p>
+            ) : filtered.map(o => (
+              <button key={o.id} onClick={() => { onClientChange(o.id); setOpen(false) }}
+                className={cn('flex w-full items-center gap-2.5 px-3 py-2.5 text-left transition-colors hover:bg-slate-50 dark:hover:bg-white/[0.05]',
+                  o.id === activeClientId ? 'text-violet-600 dark:text-violet-400' : 'text-slate-700 dark:text-slate-300')}>
+                <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-violet-500 to-purple-600 text-[10px] font-bold text-white">
+                  {o.name.charAt(0).toUpperCase()}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">{o.name}</p>
+                  {o.sub && <p className="truncate text-[10px] text-slate-400">{o.sub}</p>}
+                </div>
+                {o.pending && o.pending > 0 && (
+                  <span className="flex-shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-500/20 dark:text-amber-400">
+                    {o.pending}
+                  </span>
+                )}
+                {o.id === activeClientId && <div className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-violet-500" />}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 
-function Sidebar({ user, clients, clientsDiag = [], activePage, activeClientId, onNavigate, onClientChange, onClientCreated, onSignOut, onToggleDark, dark, collapsed, onToggleCollapse, mobileOpen = false, onCloseMobile = () => {} }: {
-  user: AppUser; clients: Client[]
-  clientsDiag?: { strategy: string; rows: number; error?: string }[]
+function Sidebar({ user, activePage, activeClientId, onNavigate, onClientChange, onSignOut, onToggleDark, dark, collapsed, onToggleCollapse, mobileOpen = false, onCloseMobile = () => {} }: {
+  user: AppUser
   activePage: Page; activeClientId: string | null
   onNavigate: (p: Page) => void; onClientChange: (id: string | null) => void
-  onClientCreated?: (c: Client) => void
   onSignOut: () => void
   onToggleDark: () => void; dark: boolean; collapsed: boolean; onToggleCollapse: () => void
   mobileOpen?: boolean; onCloseMobile?: () => void
 }) {
-  const [clientDropOpen, setClientDropOpen] = useState(false)
-  const [clientPending, setClientPending] = useState<Record<string, number>>({})
-  const [quickName, setQuickName] = useState('')
-  const [quickBusy, setQuickBusy] = useState(false)
-  const [showDiag, setShowDiag] = useState(false)
-  const activeClient = clients.find(c => c.id === activeClientId)
-
-  async function quickCreate() {
-    if (!quickName.trim() || quickBusy) return
-    setQuickBusy(true)
-    const trimmed = quickName.trim()
-    // Try Supabase first
-    const { data, error } = await sb.from('clients').insert({ name: trimmed }).select('id,name').single()
-    setQuickBusy(false)
-    let created: Client
-    if (error || !data) {
-      // Fallback: localStorage so the admin can keep working without RLS access
-      created = { id: 'local-' + Math.random().toString(36).slice(2, 10), name: trimmed }
-      const stored = JSON.parse(localStorage.getItem('local-clients') || '[]') as Client[]
-      stored.push(created)
-      localStorage.setItem('local-clients', JSON.stringify(stored))
-      showToast(`Client "${trimmed}" added locally (Supabase: ${error?.message || 'no row returned'})`, 'info')
-    } else {
-      created = data as Client
-      showToast(`Client "${created.name}" created`, 'success')
-    }
-    onClientCreated?.(created)
-    onClientChange(created.id)
-    setQuickName('')
-    setClientDropOpen(false)
-  }
   const visibleNav = NAV_ITEMS.filter(n => {
     if (n.adminOnly && user.role !== 'admin') return false
     if (n.clientOnly && user.role === 'admin') return false
     return true
   })
-
-  useEffect(() => {
-    if (user.role !== 'admin' || clients.length === 0) return
-    Promise.all(
-      clients.map(c =>
-        sb.from('appointments').select('id', { count: 'exact', head: true })
-          .eq('client_id', c.id).eq('status', 'pending').is('deleted_at', null)
-          .then(({ count }) => ({ id: c.id, count: count ?? 0 }))
-      )
-    ).then(results => {
-      setClientPending(Object.fromEntries(results.map(r => [r.id, r.count])))
-    }).catch(() => {})
-  }, [clients, user.role])
 
   return (
     <>
@@ -597,133 +703,9 @@ function Sidebar({ user, clients, clientsDiag = [], activePage, activeClientId, 
       </div>
       {collapsed && <button onClick={onToggleCollapse} className="mx-auto mt-2 rounded-lg p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-white/10 dark:hover:text-white"><ChevronRight className="h-4 w-4" /></button>}
 
-      {/* Admin client switcher */}
+      {/* Admin client selector */}
       {user.role === 'admin' && !collapsed && (
-        <div className="px-3 pt-3">
-          <button onClick={() => setClientDropOpen(v => !v)}
-            className="flex w-full items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-left transition-colors hover:bg-slate-100 dark:border-white/[0.08] dark:bg-white/[0.04] dark:hover:bg-white/[0.07]">
-            <Building2 className="h-4 w-4 flex-shrink-0 text-slate-400" />
-            <span className="flex-1 truncate text-sm text-slate-700 dark:text-slate-300">
-              {activeClientId === null ? 'All Clients' : (activeClient?.name ?? 'Select client')}
-            </span>
-            <ChevronDown className={cn('h-4 w-4 flex-shrink-0 text-slate-400 transition-transform duration-200', clientDropOpen && 'rotate-180')} />
-          </button>
-          {clientDropOpen && (
-            <div className="mt-1 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg dark:border-white/[0.08] dark:bg-slate-900 dark:shadow-black/40">
-              {/* All Clients option */}
-              <button onClick={() => { onClientChange(null); setClientDropOpen(false) }}
-                className={cn('flex w-full items-center gap-2.5 border-b border-slate-100 px-3 py-2.5 text-sm transition-colors hover:bg-slate-50 dark:border-white/[0.06] dark:hover:bg-white/[0.05]',
-                  activeClientId === null ? 'text-violet-600 dark:text-violet-400' : 'text-slate-500 dark:text-slate-400')}>
-                <Globe className="h-3.5 w-3.5 flex-shrink-0" />
-                <span className="font-medium">All Clients</span>
-                {activeClientId === null && <div className="ml-auto h-1.5 w-1.5 rounded-full bg-violet-500" />}
-              </button>
-              {clients.length === 0 ? (
-                <div className="space-y-2 px-3 py-3">
-                  <p className="text-center text-[11px] font-medium text-slate-500 dark:text-slate-400">Add your first client</p>
-                  <input
-                    type="text"
-                    value={quickName}
-                    onChange={e => setQuickName(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter') quickCreate() }}
-                    placeholder="Business name"
-                    disabled={quickBusy}
-                    className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700 placeholder-slate-400 outline-none focus:border-violet-400 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-slate-300 dark:placeholder-slate-600 dark:focus:border-violet-500"
-                  />
-                  <button
-                    onClick={quickCreate}
-                    disabled={!quickName.trim() || quickBusy}
-                    className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-violet-600 px-3 py-2 text-[11px] font-medium text-white transition-colors hover:bg-violet-500 disabled:opacity-50"
-                  >
-                    {quickBusy ? <RefreshCw className="h-3 w-3 animate-spin" /> : <UserPlus className="h-3 w-3" />}
-                    {quickBusy ? 'Creating…' : 'Add client'}
-                  </button>
-                  <button
-                    onClick={() => {
-                      const seeds = ['magnussscad1@gmail.com', 'adriansmagnussscadrinieks@gmail.com']
-                      const stored = JSON.parse(localStorage.getItem('local-clients') || '[]') as Client[]
-                      for (const email of seeds) {
-                        if (!stored.some(c => c.name === email)) {
-                          const c: Client = { id: 'local-' + Math.random().toString(36).slice(2, 10), name: email }
-                          stored.push(c); onClientCreated?.(c)
-                        }
-                      }
-                      localStorage.setItem('local-clients', JSON.stringify(stored))
-                      showToast('Test clients added', 'success')
-                      setClientDropOpen(false)
-                    }}
-                    className="w-full rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-[10px] font-medium text-violet-700 transition-colors hover:bg-violet-100 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-300 dark:hover:bg-violet-500/20"
-                  >
-                    + Add 2 test clients
-                  </button>
-                  <button
-                    onClick={() => setShowDiag(v => !v)}
-                    className="w-full rounded-lg px-3 py-1.5 text-[10px] text-slate-400 transition-colors hover:text-violet-600 dark:hover:text-violet-400"
-                  >
-                    {showDiag ? 'Hide diagnostics ▲' : 'Show diagnostics ▼'}
-                  </button>
-                  {showDiag && (
-                    <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-[10px] dark:border-amber-500/20 dark:bg-amber-500/[0.06]">
-                      <div className="space-y-1">
-                        {clientsDiag.length === 0
-                          ? <p className="text-slate-500 dark:text-slate-400">Loading diagnostics…</p>
-                          : clientsDiag.map((d, i) => (
-                              <div key={i} className="flex flex-col gap-0.5">
-                                <div className="flex items-center justify-between gap-2">
-                                  <span className="font-mono text-slate-600 dark:text-slate-300">{d.strategy}</span>
-                                  <span className={cn('font-mono', d.error ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400')}>
-                                    {d.rows} rows
-                                  </span>
-                                </div>
-                                {d.error && <p className="break-all font-mono text-red-600 dark:text-red-400">{d.error}</p>}
-                              </div>
-                            ))
-                        }
-                      </div>
-                      {clientsDiag.some(d => d.error?.toLowerCase().includes('row-level') || d.error?.toLowerCase().includes('permission') || d.error?.toLowerCase().includes('policy')) && (
-                        <div className="border-t border-amber-300/40 pt-2 dark:border-amber-500/20">
-                          <p className="mb-1 font-semibold text-amber-700 dark:text-amber-400">RLS likely blocking — run this in Supabase SQL editor:</p>
-                          <pre className="overflow-x-auto rounded bg-slate-900 p-2 text-[9px] text-slate-300">{`alter table clients enable row level security;
-create policy "admins read clients"
-  on clients for select
-  using (coalesce(
-    (auth.jwt()->'user_metadata'->>'role'),''
-  ) = 'admin');
-create policy "admins write clients"
-  on clients for all
-  using (coalesce(
-    (auth.jwt()->'user_metadata'->>'role'),''
-  ) = 'admin');`}</pre>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ) :
-                clients.map(c => {
-                  const pending = clientPending[c.id] ?? 0
-                  const inactive = c.status === 'inactive'
-                  return (
-                    <button key={c.id} onClick={() => { onClientChange(c.id); setClientDropOpen(false) }}
-                      className={cn('flex w-full items-center gap-2.5 px-3 py-2.5 transition-colors hover:bg-slate-50 dark:hover:bg-white/[0.05]',
-                        c.id === activeClientId ? 'text-violet-600 dark:text-violet-400' : 'text-slate-700 dark:text-slate-300')}>
-                      <div className={cn('mt-0.5 h-2 w-2 flex-shrink-0 rounded-full', inactive ? 'bg-red-400' : 'bg-emerald-400')} />
-                      <div className="min-w-0 flex-1 text-left">
-                        <p className="truncate text-sm font-medium">{c.name}</p>
-                        {c.last_active && <p className="truncate text-[10px] text-slate-400">{formatDate(c.last_active)}</p>}
-                      </div>
-                      {pending > 0 && (
-                        <span className="flex-shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-500/20 dark:text-amber-400">
-                          {pending}
-                        </span>
-                      )}
-                      {c.id === activeClientId && <div className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-violet-500" />}
-                    </button>
-                  )
-                })}
-            </div>
-          )}
-        </div>
+        <ClientSelector user={user} activeClientId={activeClientId} onClientChange={onClientChange} />
       )}
 
       {/* Nav */}
@@ -3249,9 +3231,8 @@ export default function DrizzleBotDashboard() {
     typeof window === 'undefined' ? true : !window.matchMedia('(prefers-color-scheme: light)').matches
   )
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const [clients, setClients]                 = useState<Client[]>([])
   const [activeClientId, setActiveClientId]   = useState<string | null>(null)
-  const [clientsDiag, setClientsDiag]         = useState<{ strategy: string; rows: number; error?: string }[]>([])
+  const [clientsKey, setClientsKey]           = useState(0)
   const [notifOpen, setNotifOpen]             = useState(false)
   const [notifications, setNotifications]     = useState<Notification[]>([])
   const notifRef = useRef<HTMLDivElement>(null)
@@ -3267,69 +3248,6 @@ export default function DrizzleBotDashboard() {
     const { data: { subscription } } = sb.auth.onAuthStateChange((_, session) => { if (!session) setUser(null) })
     return () => subscription.unsubscribe()
   }, [])
-
-  useEffect(() => {
-    if (!user || user.role !== 'admin') return
-
-    async function loadClients() {
-      const diag: { strategy: string; rows: number; error?: string }[] = []
-      const merged = new Map<string, Client>()
-
-      // Strategy 1: dedicated clients table
-      const { data: c1, error: e1 } = await sb.from('clients').select('id,name,status,last_active')
-      diag.push({ strategy: 'clients table', rows: c1?.length ?? 0, error: e1?.message })
-      console.log('[clients] strategy 1 — clients table:', { rows: c1?.length, error: e1?.message })
-      if (!e1 && c1) for (const c of c1 as any[]) merged.set(c.id, c as Client)
-
-      // Strategy 2: ALL profiles (no role filter — test users may have role=admin or null)
-      const { data: c2, error: e2 } = await sb.from('profiles').select('id,name,email,client_id,role')
-      diag.push({ strategy: 'profiles (all roles)', rows: c2?.length ?? 0, error: e2?.message })
-      console.log('[clients] strategy 2 — profiles all:', { rows: c2?.length, error: e2?.message })
-      if (!e2 && c2) {
-        for (const p of c2 as any[]) {
-          const key = p.client_id ?? p.id
-          if (!merged.has(key)) merged.set(key, { id: key, name: p.name || p.email || key })
-        }
-      }
-
-      // Strategy 3: derive from appointments — fetch email+client_id together
-      const { data: c3, error: e3 } = await sb.from('appointments').select('client_id,email').limit(500)
-      diag.push({ strategy: 'appointments.email', rows: c3?.length ?? 0, error: e3?.message })
-      console.log('[clients] strategy 3 — appointments:', { rows: c3?.length, error: e3?.message })
-      if (!e3 && c3) {
-        // Pick the most recent email per client_id
-        const byId: Record<string, string> = {}
-        for (const r of c3 as any[]) {
-          if (r.client_id && r.email && !byId[r.client_id]) byId[r.client_id] = r.email
-        }
-        for (const [id, email] of Object.entries(byId)) {
-          if (!merged.has(id)) merged.set(id, { id, name: email })
-        }
-      }
-
-      // Strategy 4: include the currently-logged-in admin as a switchable client
-      if (user) {
-        const key = user.client_id ?? user.id
-        if (!merged.has(key)) merged.set(key, { id: key, name: user.name || user.email || key })
-      }
-
-      // Strategy 5: load any clients the admin added locally (works without RLS)
-      try {
-        const local = JSON.parse(localStorage.getItem('local-clients') || '[]') as Client[]
-        diag.push({ strategy: 'localStorage', rows: local.length })
-        for (const c of local) if (!merged.has(c.id)) merged.set(c.id, c)
-      } catch { /* ignore */ }
-
-      const all = Array.from(merged.values())
-      diag.push({ strategy: 'merged total', rows: all.length })
-      setClients(all)
-      setClientsDiag(diag)
-
-      if (all.length === 0) console.warn('[clients] all strategies returned empty', { e1: e1?.message, e2: e2?.message, e3: e3?.message })
-    }
-
-    loadClients()
-  }, [user])
 
   useEffect(() => {
     const h = (e: MouseEvent) => { if (notifRef.current && !notifRef.current.contains(e.target as Node)) setNotifOpen(false) }
@@ -3387,9 +3305,8 @@ export default function DrizzleBotDashboard() {
         .dark input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(0.5)}
       `}</style>
 
-      <Sidebar user={user} clients={clients} clientsDiag={clientsDiag} activePage={page} activeClientId={activeClientId}
+      <Sidebar key={clientsKey} user={user} activePage={page} activeClientId={activeClientId}
         onNavigate={setPage} onClientChange={setActiveClientId}
-        onClientCreated={c => setClients(cs => [...cs, c])}
         onSignOut={handleSignOut}
         dark={dark} onToggleDark={() => setDark(d => !d)}
         collapsed={sidebarCollapsed} onToggleCollapse={() => setSidebarCollapsed(c => !c)}
@@ -3427,7 +3344,7 @@ export default function DrizzleBotDashboard() {
           {page === 'reports'  && <ReportsPage  user={user} activeClientId={activeClientId} />}
           {page === 'profile'  && <ProfilePage  user={user} activeClientId={activeClientId} />}
           {page === 'users'    && user.role === 'admin' && <UserManagementPage user={user} activeClientId={activeClientId} />}
-          {page === 'controls' && user.role === 'admin' && <ControlsPage      user={user} activeClientId={activeClientId} onClientCreated={c => setClients(cs => [...cs, c])} />}
+          {page === 'controls' && user.role === 'admin' && <ControlsPage      user={user} activeClientId={activeClientId} onClientCreated={() => setClientsKey(k => k + 1)} />}
           {page === 'audit'    && user.role === 'admin' && <AuditLogPage       user={user} activeClientId={activeClientId} />}
         </main>
       </div>
